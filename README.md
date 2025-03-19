@@ -1,1 +1,1 @@
-# Reinforcement-Learning-Individual-Project
+### First Part - Basics of Pygame and Reinforcement Learning
