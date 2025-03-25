@@ -23,12 +23,21 @@ class Agent:
         self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
 
     def load_model(self, model_path):
-        if os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path))
-            self.model.eval()
-            print(f"Model loaded from {model_path}")
-        else:
-            print(f"No model found at {model_path}")
+        try:
+            if os.path.exists(model_path):
+                self.model.load_state_dict(torch.load(model_path))
+                self.model.eval()
+                print(f"Model loaded from {model_path}")
+            else:
+                print(f"No model found at {model_path}")
+        except Exception as e:
+            print(f"Error loading model from {model_path}: {e}")
+
+    def save_model(self, model_path):
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        torch.save(self.model.state_dict(), model_path)
+        print(f"Model saved to {model_path}")
 
     def get_state(self, game):
         head = game.snake[0]
@@ -109,42 +118,51 @@ class Agent:
         return final_move
 
 
-def train(load_model=False):
+def train(load_path=None, save_path=None):
     plot_scores = []
     plot_mean_scores = []
     total_score = 0
     record = 0
     agent = Agent()
-    if load_model:
-        agent.load_model('../model/model.pth')
+    
+    # Set default save path if none provided
+    if save_path is None:
+        save_path = os.path.join(os.path.dirname(__file__), "models", "model.pth")
+    
+    if load_path:
+        agent.load_model(load_path)
+    
+    # Ensure save directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
     game = SnakeGameAI()
     try:
         while True:
-        # get old state
+            # get old state
             state_old = agent.get_state(game)
 
-        # get move
+            # get move
             final_move = agent.get_action(state_old)
 
-        # perform move and get new state
+            # perform move and get new state
             reward, done, score = game.play_step(final_move)
             state_new = agent.get_state(game)
 
-        # train short memory
+            # train short memory
             agent.train_short_memory(state_old, final_move, reward, state_new, done)
 
-        # remember
+            # remember
             agent.remember(state_old, final_move, reward, state_new, done)
 
             if done:
-            # train long memory, plot result
                 game.reset()
                 agent.n_games += 1
                 agent.train_long_memory()
 
                 if score > record:
                     record = score
-                    agent.model.save("../model/model.pth")
+                    if save_path:
+                        agent.save_model(save_path)
 
                 print('Game', agent.n_games, 'Score', score, 'Record:', record)
 
@@ -154,13 +172,17 @@ def train(load_model=False):
                 plot_mean_scores.append(mean_score)
                 plot(plot_scores, plot_mean_scores)
     except KeyboardInterrupt:
-        agent.save_model('../model/model.pth')
-        print("Training interrupted. Model saved.")
+        if save_path:
+            agent.save_model(save_path)
+            print("Training interrupted. Model saved.")
+        else:
+            print("Training interrupted. No save path provided.")
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Process some files.")
-    parser.add_argument("-l", "--load_model", help="loads already trained model", action="store_true")
+    parser = argparse.ArgumentParser(description="Train the Snake AI model.")
+    parser.add_argument("-l", "--load", help="path to load the model from", type=str)
+    parser.add_argument("-s", "--save", help="path to save the model to", type=str)
     args = parser.parse_args()
 
-    train(load_model=args.load_model)
+    train(load_path=args.load, save_path=args.save)
