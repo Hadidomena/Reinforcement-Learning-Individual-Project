@@ -1,7 +1,6 @@
 from collections import namedtuple
 from enum import Enum
 import pygame
-import random
 import numpy as np
 import os
 from LevelEditor import LevelEditor
