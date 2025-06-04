@@ -92,8 +92,7 @@ def draw_text(text, font, text_col, x, y):
 def display_data():
   #draw panel
   pg.draw.rect(screen, "maroon", (c.SCREEN_WIDTH, 0, c.SIDE_PANEL, c.SCREEN_HEIGHT))
-  pg.draw.rect(screen, "grey0", (c.SCREEN_WIDTH, 0, c.SIDE_PANEL, 400), 2)
-  screen.blit(logo_image, (c.SCREEN_WIDTH, 400))
+  pg.draw.rect(screen, "grey0", (c.SCREEN_WIDTH, 0, c.SIDE_PANEL, c.SCREEN_HEIGHT), 2)
   #display data
   draw_text("LEVEL: " + str(world.level), text_font, "grey100", c.SCREEN_WIDTH + 10, 10)
   screen.blit(heart_image, (c.SCREEN_WIDTH + 10, 35))
@@ -153,9 +152,8 @@ enemy_group = pg.sprite.Group()
 turret_group = pg.sprite.Group()
 
 #create buttons
-turret_button = Button(c.SCREEN_WIDTH + 30, 120, buy_turret_image, True)
+upgrade_button = Button(c.SCREEN_WIDTH + 30, 120, upgrade_turret_image, True)
 cancel_button = Button(c.SCREEN_WIDTH + 50, 180, cancel_image, True)
-upgrade_button = Button(c.SCREEN_WIDTH + 5, 180, upgrade_turret_image, True)
 begin_button = Button(c.SCREEN_WIDTH + 60, 300, begin_image, True)
 restart_button = Button(310, 300, restart_image, True)
 fast_forward_button = Button(c.SCREEN_WIDTH + 50, 300, fast_forward_image, False)
@@ -165,8 +163,9 @@ turret_type_buttons = []
 # Calculate spacing based on number of turret types to avoid overlap
 button_spacing = min(80, (c.SIDE_PANEL - 50) // max(1, len(turret_types)))
 for i, turret_type in enumerate(turret_types):
-    button_x = c.SCREEN_WIDTH + 30 + (i * button_spacing)
-    button_y = 180  # Position below the buy button
+    # Space turret buttons vertically in the side panel
+    button_x = c.SCREEN_WIDTH + 50
+    button_y = 180 + (i * 80)  # Vertical spacing between turret buttons
     turret_type_buttons.append((
         Button(button_x, button_y, cursor_turrets[turret_type], True),
         turret_type
@@ -243,24 +242,22 @@ while run:
       world.process_enemies()
 
     #draw buttons
-    #button for placing turrets
-    #for the "turret button" show cost of turret and draw the button
-    draw_text(str(c.BUY_COST), text_font, "grey100", c.SCREEN_WIDTH + 215, 135)
-    screen.blit(coin_image, (c.SCREEN_WIDTH + 260, 130))
-    if turret_button.draw(screen):
-        placing_turrets = True
     
-    # Draw turret type buttons with labels underneath
+    # Draw turret type buttons with labels and costs
     for i, (btn, t_type) in enumerate(turret_type_buttons):
+        # Show cost of turret beneath each turret button
+        draw_text(str(c.BUY_COST), text_font, "grey100", c.SCREEN_WIDTH + 95, 185 + (i * 80))
+        screen.blit(coin_image, (c.SCREEN_WIDTH + 130, 180 + (i * 80)))
+        # Draw button and handle click
         if btn.draw(screen):
             selected_turret_type = turret_types.index(t_type)
-        # Draw label directly under each button
-        button_x = c.SCREEN_WIDTH + 50 + (i * 100)  # Match position from creation
-        draw_text(t_type.capitalize(), text_font, "grey100", button_x - 10, 240)
+            placing_turrets = True
+        # Draw label directly beside each button
+        draw_text(t_type.capitalize(), text_font, "grey100", c.SCREEN_WIDTH + 150, 180 + (i * 80))
     
-    # Show the currently selected type - moved below buttons to avoid overlap
-    draw_text(f"Current: {turret_types[selected_turret_type].capitalize()}", 
-              text_font, "grey100", c.SCREEN_WIDTH + 80, 280)
+    # Show the currently selected type at the top of the panel
+    draw_text(f"Selected: {turret_types[selected_turret_type].capitalize()}", 
+              text_font, "grey100", c.SCREEN_WIDTH + 50, 80)
     
     #if placing turrets then show the cancel button as well
     if placing_turrets == True:
@@ -272,14 +269,18 @@ while run:
             screen.blit(cursor_turrets[turret_types[selected_turret_type]], cursor_rect)
         if cancel_button.draw(screen):
             placing_turrets = False
+        # Display cancel message
+        draw_text("Cancel", text_font, "grey100", c.SCREEN_WIDTH + 95, 185)
             
     #if a turret is selected then show the upgrade button
     if selected_turret:
       #if a turret can be upgraded then show the upgrade button
       if selected_turret.upgrade_level < c.TURRET_LEVELS:
         #show cost of upgrade and draw the button
-        draw_text(str(c.UPGRADE_COST), text_font, "grey100", c.SCREEN_WIDTH + 215, 195)
-        screen.blit(coin_image, (c.SCREEN_WIDTH + 260, 190))
+        draw_text(str(c.UPGRADE_COST), text_font, "grey100", c.SCREEN_WIDTH + 95, 125)
+        screen.blit(coin_image, (c.SCREEN_WIDTH + 130, 120))
+        # Display upgrade text
+        draw_text("Upgrade", text_font, "grey100", c.SCREEN_WIDTH + 150, 120)
         if upgrade_button.draw(screen):
           if world.money >= c.UPGRADE_COST:
             selected_turret.upgrade()
@@ -321,6 +322,8 @@ while run:
           #check if there is enough money for a turret
           if world.money >= c.BUY_COST:
             create_turret(mouse_pos)
+            # Exit placing turrets mode after placement
+            placing_turrets = False
         else:
           selected_turret = select_turret(mouse_pos)
 
