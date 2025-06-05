@@ -1,7 +1,7 @@
 import pygame as pg
 import random
 import constants as c
-from enemy_data import ENEMY_SPAWN_DATA
+from enemy_data import ENEMY_SPAWN_DATA, get_dynamic_enemy_count
 
 class World():
   def __init__(self, data, map_image):
@@ -36,13 +36,21 @@ class World():
       self.waypoints.append((temp_x, temp_y))
 
   def process_enemies(self):
-    enemies = ENEMY_SPAWN_DATA[self.level - 1]
+    # Get enemy counts from either predefined data or dynamic generation
+    from enemy_data import get_dynamic_enemy_count
+    enemies = get_dynamic_enemy_count(self.level)
+    
+    # Add each enemy type to the spawn list
     for enemy_type in enemies:
       enemies_to_spawn = enemies[enemy_type]
       for enemy in range(enemies_to_spawn):
         self.enemy_list.append(enemy_type)
-    #now randomize the list to shuffle the enemies
+    
+    # Randomize the list to shuffle the enemies
     random.shuffle(self.enemy_list)
+    
+    # Print information about the current level
+    print(f"Level {self.level} - Enemies: {len(self.enemy_list)} ({enemies})")
 
   def check_level_complete(self):
     if (self.killed_enemies + self.missed_enemies) == len(self.enemy_list):

@@ -1,7 +1,8 @@
 import pygame as pg
 import json
-from main import World, Enemy, Turret
-from turret import TurretSlow, TurretPowerful
+from world import World
+from enemy import Enemy
+from turret import Turret, TurretSlow, TurretPowerful
 import constants as c
 from td_agent import TowerDefenseAgent
 from td_helper import plot
@@ -219,10 +220,9 @@ class TowerDefenseAI:
             self.last_enemy_spawn = pg.time.get_ticks()        # Check game over conditions
         if self.world.health <= 0:
             game_over = True
-            reward = -100 - (c.TOTAL_LEVELS - self.world.level) * 20  # More negative reward if lost early
-        elif self.world.level > c.TOTAL_LEVELS:
-            game_over = True
-            reward = 200 + self.world.money  # Bonus for leftover money (efficiency)
+            reward = -100  # Base negative reward for losing
+            # Add multiplier based on how far the agent got
+            reward -= 20 * max(0, 30 - self.world.level)  # More negative if lost early
         elif self.frame_iteration > 1500:
             game_over = True
             reward = self.world.level * 20  # Reward based on progress

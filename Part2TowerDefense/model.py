@@ -19,7 +19,6 @@ class TowerDefenseQNet(nn.Module):
         self.linear4 = nn.Linear(hidden_size // 2, output_size)
           # Dropout for regularization
         self.dropout = nn.Dropout(0.2)
-        
     def forward(self, x):
         # Handle both single and batch inputs
         single_input = False
@@ -27,32 +26,25 @@ class TowerDefenseQNet(nn.Module):
             x = x.unsqueeze(0)
             single_input = True
             
-        # Use batch norm only during training with multiple samples
-        # During inference or with a single sample, use eval mode
-        if single_input:
+        # For inference with single samples
+        if not self.training and single_input:
             # Store original state
-            bn1_training = self.bn1.training
-            bn2_training = self.bn2.training
-            bn3_training = self.bn3.training
+            training_mode = self.training
             
-            # Set batch norm layers to eval mode temporarily
-            self.bn1.eval()
-            self.bn2.eval()
-            self.bn3.eval()
+            # Set entire model to eval mode temporarily
+            self.eval()
             
-            # Forward pass without gradients for single inputs
+            # Forward pass without batch norm issues
             with torch.no_grad():
-                x = F.relu(self.bn1(self.linear1(x)))
-                x = F.relu(self.bn2(self.linear2(x)))
-                x = F.relu(self.bn3(self.linear3(x)))
+                x = F.relu(self.linear1(x))  # Skip batch norm for single sample inference
+                x = F.relu(self.linear2(x))
+                x = F.relu(self.linear3(x))
                 x = self.linear4(x)
                 
-            # Restore original state after forward pass
-            self.bn1.training = bn1_training
-            self.bn2.training = bn2_training
-            self.bn3.training = bn3_training
+            # Restore original training state
+            self.train(training_mode)
         else:
-            # Normal training path with multiple samples
+            # For batch inputs or when explicitly in training mode
             x = F.relu(self.bn1(self.linear1(x)))
             x = self.dropout(x) if self.training else x
             x = F.relu(self.bn2(self.linear2(x)))
@@ -111,7 +103,7 @@ class TowerDefenseTrainer:
         state = [
             world.money / 1000.0,  # Normalize money
             world.health / 100.0,  # Normalize health
-            world.level / c.TOTAL_LEVELS,  # Use constant instead of world attribute
+            min(1.0, world.level / 30.0),  # Normalize level with a reasonable upper bound
             len(enemy_group) / 20.0,  # Normalize enemy count
             len(turret_group) / 10.0,  # Normalize turret count
         ]

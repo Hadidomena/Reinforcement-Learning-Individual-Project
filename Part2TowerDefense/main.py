@@ -95,6 +95,8 @@ def display_data():
   pg.draw.rect(screen, "grey0", (c.SCREEN_WIDTH, 0, c.SIDE_PANEL, c.SCREEN_HEIGHT), 2)
   #display data
   draw_text("LEVEL: " + str(world.level), text_font, "grey100", c.SCREEN_WIDTH + 10, 10)
+  # Show number of enemies in this level
+  draw_text("Enemies: " + str(len(world.enemy_list)), text_font, "grey100", c.SCREEN_WIDTH + 150, 10)
   screen.blit(heart_image, (c.SCREEN_WIDTH + 10, 35))
   draw_text(str(world.health), text_font, "grey100", c.SCREEN_WIDTH + 50, 40)
   screen.blit(coin_image, (c.SCREEN_WIDTH + 10, 65))
@@ -187,10 +189,7 @@ while run:
     if world.health <= 0:
       game_over = True
       game_outcome = -1 #loss
-    #check if player has won
-    if world.level > c.TOTAL_LEVELS:
-      game_over = True
-      game_outcome = 1 #win
+    # No win condition based on level count - infinite rounds
 
     #update groups
     enemy_group.update(world)
@@ -289,10 +288,8 @@ while run:
             world.money -= c.UPGRADE_COST
   else:
     pg.draw.rect(screen, "dodgerblue", (200, 200, 400, 200), border_radius = 30)
-    if game_outcome == -1:
-      draw_text("GAME OVER", large_font, "grey0", 310, 230)
-    elif game_outcome == 1:
-      draw_text("YOU WIN!", large_font, "grey0", 315, 230)
+    draw_text("GAME OVER", large_font, "grey0", 310, 230)
+    draw_text(f"You survived {world.level} rounds!", text_font, "grey0", 310, 270)
     #restart level
     if restart_button.draw(screen):
       game_over = False

@@ -7,7 +7,7 @@ SCREEN_HEIGHT = TILE_SIZE * ROWS
 FPS = 60
 HEALTH = 100
 MONEY = 650
-TOTAL_LEVELS = 15
+# No level cap - infinite rounds
 
 #enemy constants
 SPAWN_COOLDOWN = 400

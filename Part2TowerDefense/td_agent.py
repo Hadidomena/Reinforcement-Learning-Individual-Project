@@ -53,13 +53,24 @@ class TowerDefenseAgent:
         self.model.train()
         
         # Process the entire batch at once
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
-
+        self.trainer.train_step(states, actions, rewards, next_states, dones)    
     def train_short_memory(self, state, action, reward, next_state, done):
         # Short memory training will accumulate samples in the trainer until
         # enough are gathered for a proper batch
-        self.model.train()  # Ensure model is in training mode
-        self.trainer.train_step(state, action, reward, next_state, done)
+        try:
+            # Ensure model is in training mode for collecting experiences
+            self.model.train()
+            
+            # For single experiences, we don't expect immediate training, just accumulation
+            loss = self.trainer.train_step(state, action, reward, next_state, done)
+            
+            # Optional debugging
+            if loss > 0:
+                return loss  # Only returns non-zero when actual training occurred
+        except Exception as e:
+            print(f"Error in train_short_memory: {e}")
+            
+        return 0.0
         
     def get_action(self, state, valid_positions):
         # Enhanced exploration-exploitation balance
