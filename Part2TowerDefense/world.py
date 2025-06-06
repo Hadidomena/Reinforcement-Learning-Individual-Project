@@ -1,4 +1,3 @@
-import pygame as pg
 import random
 import constants as c
 from enemy_data import ENEMY_SPAWN_DATA, get_dynamic_enemy_count

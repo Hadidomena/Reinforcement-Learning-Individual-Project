@@ -6,6 +6,7 @@ from turret import Turret
 from button import Button
 import constants as c
 import os
+from perks import initialize_perks, get_random_perks
 
 # Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +28,14 @@ level_started = False
 last_enemy_spawn = pg.time.get_ticks()
 placing_turrets = False
 selected_turret = None
+selected_turret_type = 0  # Default to first turret type
+
+# Perk system variables
+perks_dict = initialize_perks(SCRIPT_DIR)
+perk_selection_active = False
+perk_options = []  # Will hold current perk choices
+perks_enabled_at_level = 3  # Start offering perks at level 3
+perk_frequency = 3  # Offer perks every 3 levels
 
 #load images
 #map
@@ -102,10 +111,106 @@ def display_data():
   screen.blit(coin_image, (c.SCREEN_WIDTH + 10, 65))
   draw_text(str(world.money), text_font, "grey100", c.SCREEN_WIDTH + 50, 70)
   
-
-# Turret selection state
-selected_turret_type = 0  # 0: basic, 1: slow
-
+  # Show perk information
+  if world.level >= perks_enabled_at_level:
+      next_perk_level = ((world.level // perk_frequency) + 1) * perk_frequency
+      levels_until_perk = next_perk_level - world.level
+      if levels_until_perk == 0:
+          perk_text = "Perk available this round!"
+          text_color = "yellow"
+      else:
+          perk_text = f"Next perk in {levels_until_perk} rounds"
+          text_color = "grey100"
+      draw_text(perk_text, text_font, text_color, c.SCREEN_WIDTH + 10, 95)
+  
+def render_perk_selection():
+    # Create a semi-transparent overlay
+    overlay = pg.Surface((c.SCREEN_WIDTH, c.SCREEN_HEIGHT))
+    overlay.fill((0, 0, 0))
+    overlay.set_alpha(150)
+    screen.blit(overlay, (0, 0))
+    
+    # Draw perk selection panel
+    panel_width = 600
+    panel_height = 300
+    panel_x = (c.SCREEN_WIDTH - panel_width) // 2
+    panel_y = (c.SCREEN_HEIGHT - panel_height) // 2
+    
+    # Draw panel background
+    pg.draw.rect(screen, "dodgerblue", 
+                (panel_x, panel_y, panel_width, panel_height), 
+                border_radius=15)
+    pg.draw.rect(screen, "navy", 
+                (panel_x, panel_y, panel_width, panel_height), 
+                width=4, border_radius=15)
+    
+    # Draw heading
+    draw_text("Choose a Perk", large_font, "white", panel_x + 200, panel_y + 20)
+    
+    # Calculate positions for three perk options
+    option_width = 150
+    option_spacing = 40
+    starting_x = panel_x + (panel_width - (3 * option_width + 2 * option_spacing)) // 2
+    
+    # Draw each perk option
+    selected_perk = None
+    for i, perk in enumerate(perk_options):
+        # Calculate position
+        x = starting_x + i * (option_width + option_spacing)
+        y = panel_y + 80
+        
+        # Draw option background (brighter if mouse is over it)
+        perk_rect = pg.Rect(x, y, option_width, 180)
+        mouse_pos = pg.mouse.get_pos()
+        
+        if perk_rect.collidepoint(mouse_pos):
+            pg.draw.rect(screen, "skyblue", perk_rect, border_radius=10)
+            if pg.mouse.get_pressed()[0]:
+                selected_perk = perk
+        else:
+            pg.draw.rect(screen, "lightblue", perk_rect, border_radius=10)
+        
+        pg.draw.rect(screen, "white", perk_rect, width=2, border_radius=10)
+        
+        # Draw perk icon
+        icon_rect = perk.image.get_rect()
+        icon_rect.center = (x + option_width // 2, y + 80)
+        screen.blit(perk.image, icon_rect)
+        
+        # Draw perk name
+        draw_text(perk.name, text_font, "navy", x + 10, y + 100)
+        
+        # Create wrapped description text
+        description = perk.description
+        if perk.max_count < float('inf'):
+            description += f" ({perk.count + 1}/{perk.max_count})"
+        
+        # Split description into words
+        words = description.split()
+        lines = []
+        current_line = ""
+        
+        # Word wrap to fit within the perk button width
+        max_chars_per_line = 11  # Adjust based on font size and perk width
+        
+        for word in words:
+            test_line = current_line + " " + word if current_line else word
+            if len(test_line) <= max_chars_per_line:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+        
+        if current_line:
+            lines.append(current_line)
+        
+        # Draw description with line breaks
+        for line_idx, line in enumerate(lines):
+            # Limit to 3 lines maximum to avoid overflow
+            if line_idx < 3:
+                draw_text(line, text_font, "black", x + 10, y + 130 + line_idx * 20)
+    
+    return selected_perk
 def create_turret(mouse_pos):
     mouse_tile_x = mouse_pos[0] // c.TILE_SIZE
     mouse_tile_y = mouse_pos[1] // c.TILE_SIZE
@@ -154,7 +259,7 @@ enemy_group = pg.sprite.Group()
 turret_group = pg.sprite.Group()
 
 #create buttons
-upgrade_button = Button(c.SCREEN_WIDTH + 30, 120, upgrade_turret_image, True)
+upgrade_button = Button(c.SCREEN_WIDTH + 30, 145, upgrade_turret_image, True)
 # Position cancel and begin buttons at the bottom of the screen
 cancel_button = Button(c.SCREEN_WIDTH, c.SCREEN_HEIGHT - 60, cancel_image, True)
 begin_button = Button(c.SCREEN_WIDTH + 110, c.SCREEN_HEIGHT - 60, begin_image, True)
@@ -214,8 +319,13 @@ while run:
   display_data()
 
   if game_over == False:
+    # If perk selection is active, show it and handle selection
+    if perk_selection_active:
+      # Just render the perk selection UI, actual selection is handled in event handling
+      render_perk_selection()
+      # Don't allow other game actions while perk selection is active
     # First draw the cancel button if in placing turrets mode
-    if placing_turrets == True:
+    elif placing_turrets == True:
         if cancel_button.draw(screen):
             placing_turrets = False
             
@@ -245,7 +355,12 @@ while run:
       last_enemy_spawn = pg.time.get_ticks()
       world.reset_level()
       world.process_enemies()
-
+      
+      # Check if this level should trigger perk selection
+      if world.level >= perks_enabled_at_level and world.level % perk_frequency == 0:
+        perk_options = get_random_perks(perks_dict, 3)
+        if perk_options:  # Make sure we have perks to show
+          perk_selection_active = True
     #draw buttons
     
     # Draw turret type buttons with labels and costs
@@ -260,9 +375,9 @@ while run:
         # Draw label directly to the right of the button
         draw_text(t_type.capitalize(), text_font, "grey100", c.SCREEN_WIDTH + 160, 185 + (i * 80))
     
-    # Show the currently selected type below the money counter to avoid overlap
+    # Show the currently selected type below the perk information
     draw_text(f"Selected: {turret_types[selected_turret_type].capitalize()}", 
-              text_font, "grey100", c.SCREEN_WIDTH + 10, 100)
+              text_font, "grey100", c.SCREEN_WIDTH + 10, 120)
     
     #if placing turrets then show the cursor
     if placing_turrets == True:
@@ -272,16 +387,14 @@ while run:
         cursor_rect.center = cursor_pos
         if cursor_pos[0] <= c.SCREEN_WIDTH:
             screen.blit(cursor_turrets[turret_types[selected_turret_type]], cursor_rect)
-            
-    #if a turret is selected then show the upgrade button
+    
+    # Show upgrade button if a turret is selected        
     if selected_turret:
       #if a turret can be upgraded then show the upgrade button
       if selected_turret.upgrade_level < c.TURRET_LEVELS:
         #show cost of upgrade and draw the button - coin first then text
-        screen.blit(coin_image, (c.SCREEN_WIDTH + 95, 120))
-        draw_text(str(c.UPGRADE_COST), text_font, "grey100", c.SCREEN_WIDTH + 120, 125)
+        screen.blit(coin_image, (c.SCREEN_WIDTH + 95, 145))
         # Display upgrade text
-        draw_text("Upgrade", text_font, "grey100", c.SCREEN_WIDTH + 170, 120)
         if upgrade_button.draw(screen):
           if world.money >= c.UPGRADE_COST:
             selected_turret.upgrade()
@@ -296,14 +409,28 @@ while run:
       level_started = False
       placing_turrets = False
       selected_turret = None
+      selected_turret_type = 0  # Reset to first turret type
+      perk_selection_active = False
       last_enemy_spawn = pg.time.get_ticks()
+      
+      # Reset perks
+      perks_dict = initialize_perks(SCRIPT_DIR)
+      
+      # Reset damage to default
+      c.DAMAGE = 5  # Reset to default damage value
+      
+      # Reset world
       world = World(world_data, map_image)
       world.process_data()
       world.process_enemies()
+      
       #empty groups
       enemy_group.empty()
       turret_group.empty()
 
+  #update display
+  pg.display.flip()
+  
   #event handler
   for event in pg.event.get():
     #quit program
@@ -312,8 +439,33 @@ while run:
     #mouse click
     if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
       mouse_pos = pg.mouse.get_pos()
-      #check if mouse is on the game area
-      if mouse_pos[0] < c.SCREEN_WIDTH and mouse_pos[1] < c.SCREEN_HEIGHT:
+      
+      # Handle perk selection separately
+      if perk_selection_active:
+        # Check if a perk was clicked on
+        panel_width = 600
+        panel_height = 300
+        panel_x = (c.SCREEN_WIDTH - panel_width) // 2
+        panel_y = (c.SCREEN_HEIGHT - panel_height) // 2
+        
+        option_width = 150
+        option_spacing = 40
+        starting_x = panel_x + (panel_width - (3 * option_width + 2 * option_spacing)) // 2
+        
+        # Check each perk option
+        for i, perk in enumerate(perk_options):
+          x = starting_x + i * (option_width + option_spacing)
+          y = panel_y + 80
+          perk_rect = pg.Rect(x, y, option_width, 180)
+          
+          if perk_rect.collidepoint(mouse_pos):
+            # Apply the selected perk effect
+            perk.apply_effect(world, turret_group)
+            # Close perk selection
+            perk_selection_active = False
+            break
+      #check if mouse is on the game area (only if not in perk selection)
+      elif mouse_pos[0] < c.SCREEN_WIDTH and mouse_pos[1] < c.SCREEN_HEIGHT:
         #clear selected turrets
         selected_turret = None
         clear_selection()
@@ -326,7 +478,5 @@ while run:
         else:
           selected_turret = select_turret(mouse_pos)
 
-  #update display
-  pg.display.flip()
-
+#quit pygame
 pg.quit()
