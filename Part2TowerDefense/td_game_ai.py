@@ -9,6 +9,7 @@ from td_helper import plot
 import os
 import numpy as np
 import random
+from perks import initialize_perks, get_random_perks
 
 # Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +58,10 @@ shot_fx.set_volume(0.1)  # Lower volume for training
 with open(os.path.join(SCRIPT_DIR, 'levels/level.tmj')) as file:
     world_data = json.load(file)
 
+# Load perk images
+perks_enabled_at_level = 3  # Start offering perks at level 3
+perk_frequency = 3  # Offer perks every 3 levels
+
 class TowerDefenseAI:
     def __init__(self):
         # Use the already initialized display
@@ -69,6 +74,12 @@ class TowerDefenseAI:
         self.turret_spritesheets_dict = turret_spritesheets_dict
         self.shot_fx = shot_fx
         self.enemy_images = enemy_images
+        
+        # Initialize perk system
+        self.perks_dict = initialize_perks(SCRIPT_DIR)
+        self.perk_selection_active = False
+        self.perk_options = []
+        self.chosen_perks = []
 
         self.reset()
         print("AI mode initialized")
@@ -93,12 +104,37 @@ class TowerDefenseAI:
         self.last_enemy_spawn = pg.time.get_ticks()
         self.world.level = 1
         
+        # Initialize tracking variables
+        self.enemies_spawned = 0
+        self.enemies_killed = 0
+        self.initial_turret_count = 0
+        self.perks_dict = initialize_perks(SCRIPT_DIR)
+        self.perk_selection_active = False
+        self.perk_options = []
+        
         # Start spawning immediately by setting time values
         pg.time.delay(10)  # Small delay to ensure time differences
         
         valid_pos = self.get_valid_positions()
         print(f"Reset complete. Valid positions: {len(valid_pos)}")
         return valid_pos
+    
+    def choose_random_perk(self):
+        """AI automatically chooses a random perk"""
+        if not self.perk_options:
+            return
+            
+        # Select a random perk
+        perk = random.choice(self.perk_options)
+        
+        # Apply the perk effect
+        perk.apply_effect(self.world, self.turret_group)
+        self.chosen_perks.append(perk.name)
+        
+        # End perk selection
+        self.perk_selection_active = False
+        
+        return perk.name
         
     def get_valid_positions(self):
         valid_positions = []
@@ -121,6 +157,7 @@ class TowerDefenseAI:
         game_over = False
         enemy_initial_count = len(self.enemy_group)
         initial_health = self.world.health
+        initial_money = self.world.money
         
         # Track enemies that reached the end this step
         if not hasattr(self.world, 'enemies_reached_end'):
@@ -131,9 +168,18 @@ class TowerDefenseAI:
             if event.type == pg.QUIT:
                 pg.quit()
                 quit()
+        
+        # Handle perk selection if active
+        if self.perk_selection_active:
+            chosen_perk = self.choose_random_perk()
+            print(f"AI selected perk: {chosen_perk}")
+            # Give a small reward for getting a perk
+            reward += 5.0
                 
-        # Process action
+        # Process action with improved rewards
         action_idx = action.argmax()
+        action_successful = False
+        
         if action_idx < c.COLS * c.ROWS:  # Place turret
             x = action_idx % c.COLS
             y = action_idx // c.COLS
@@ -157,27 +203,40 @@ class TowerDefenseAI:
                 
                 self.turret_group.add(new_turret)
                 self.world.money -= c.BUY_COST
-                  # Base reward for placing a turret + strategic position bonus (increased scale)
-                placement_reward = 10 + (position_quality * 5)
+                
+                # Improved reward calculation
+                base_reward = 5.0
+                position_bonus = position_quality * 3.0
+                timing_bonus = self._calculate_timing_bonus()
+                placement_reward = base_reward + position_bonus + timing_bonus
                 reward += placement_reward
+                action_successful = True
+                
+            else:
+                # Small penalty for invalid actions
+                reward -= 1.0
 
         elif action_idx < c.COLS * c.ROWS + len(self.turret_group):  # Upgrade turret
             turret_idx = action_idx - (c.COLS * c.ROWS)
-            for i, turret in enumerate(self.turret_group):
-                # Only upgrade if not at max level
-                if (
-                    i == turret_idx
-                    and self.world.money >= c.UPGRADE_COST
-                    and hasattr(turret, "upgrade_level")
-                    and turret.upgrade_level < c.TURRET_LEVELS
-                ):
+            turrets = list(self.turret_group)
+            if turret_idx < len(turrets):
+                turret = turrets[turret_idx]
+                if (self.world.money >= c.UPGRADE_COST and 
+                    hasattr(turret, "upgrade_level") and 
+                    turret.upgrade_level < c.TURRET_LEVELS):
                     turret.upgrade()
                     self.world.money -= c.UPGRADE_COST
-                    reward += 15 + (turret.upgrade_level * 5)  # Progressive reward for higher upgrades (increased scale)
+                    # Progressive reward for upgrades
+                    upgrade_reward = 3.0 + (turret.upgrade_level * 2.0)
+                    reward += upgrade_reward
+                    action_successful = True
+                else:
+                    # Small penalty for invalid upgrade
+                    reward -= 0.5
 
         # Reset enemies reached end counter for this step
         self.world.enemies_reached_end = 0
-        
+
         # Update game state multiple times for increased speed
         for _ in range(self.game_speed):
             # Store health before update to track lost health
@@ -198,50 +257,76 @@ class TowerDefenseAI:
                     enemy = Enemy(enemy_type, self.world.waypoints, self.enemy_images)
                     self.enemy_group.add(enemy)
                     self.world.spawned_enemies += 1
+                    self.enemies_spawned += 1
                     self.last_enemy_spawn = current_time
 
         # Calculate enemies killed (main objective)
         enemies_killed_this_step = enemy_initial_count + self.world.enemies_reached_end - len(self.enemy_group)
-        if enemies_killed_this_step > 0:            # Reward for killing enemies (increased scale)
-            reward += enemies_killed_this_step * 20
-          # Penalty for letting enemies through (increased scale)
+        if enemies_killed_this_step > 0:
+            # Reward for killing enemies with scaling based on enemy type
+            kill_reward = enemies_killed_this_step * 8.0
+            reward += kill_reward
+            self.enemies_killed += enemies_killed_this_step
+
+        # Penalty for letting enemies through with escalating cost
         health_lost = initial_health - self.world.health
         if health_lost > 0:
-            reward -= health_lost * 5
+            # Escalating penalty based on remaining health
+            health_penalty = health_lost * (2.0 + (100 - self.world.health) * 0.05)
+            reward -= health_penalty
+
+        # Survival bonus - small reward for staying alive
+        if self.world.health > 0:
+            survival_bonus = 0.1 * (self.world.health / 100.0)
+            reward += survival_bonus
+
+        # Efficiency bonus for maintaining good kill ratio
+        if self.enemies_spawned > 0:
+            kill_ratio = self.enemies_killed / self.enemies_spawned
+            if kill_ratio > 0.8:  # High efficiency
+                reward += 2.0 * kill_ratio
 
         # Check level completion
         if self.world.check_level_complete():
-            self.world.money += c.LEVEL_COMPLETE_REWARD            # Significant reward for completing a level (increased scale)
-            level_reward = 50 + (self.world.level * 20)  # Progressive reward for later levels
+            self.world.money += c.LEVEL_COMPLETE_REWARD
+            # Significant reward for completing a level
+            level_reward = 25.0 + (self.world.level * 10.0)
             reward += level_reward
             self.world.level += 1
+            
+            # Check if we should offer perks at this level
+            if self.world.level >= perks_enabled_at_level and self.world.level % perk_frequency == 0:
+                self.perk_options = get_random_perks(self.perks_dict, 3)
+                if self.perk_options:  # Make sure we have perks to show
+                    self.perk_selection_active = True
+                    print(f"Perk selection active - level {self.world.level}")
+            
             self.world.reset_level()
             self.world.process_enemies()
-            self.last_enemy_spawn = pg.time.get_ticks()        # Check game over conditions
+            self.last_enemy_spawn = pg.time.get_ticks()
+            
+        # Check game over conditions
         if self.world.health <= 0:
             game_over = True
-            reward = -100  # Base negative reward for losing
-            # Add multiplier based on how far the agent got
-            reward -= 20 * max(0, 30 - self.world.level)  # More negative if lost early
-        elif self.frame_iteration > 1500:
-            game_over = True
-            reward = self.world.level * 20  # Reward based on progress
+            # Penalty based on performance
+            death_penalty = -50.0
+            # Less penalty if made some progress
+            progress_bonus = min(20.0, self.world.level * 2.0 + self.enemies_killed * 0.5)
+            reward = death_penalty + progress_bonus
             
-        # Update rewards - track both per-game rewards and cumulative rewards
-        if reward != 0:  # Debug print to verify rewards are being generated
-            print(f"Reward in this step: {reward}")
-        
+        elif self.frame_iteration > 2000:  # Increased timeout
+            game_over = True
+            # Reward based on survival and progress
+            timeout_reward = self.world.level * 5.0 + self.enemies_killed * 0.2
+            reward += timeout_reward
+            
         # Track rewards for the current game only
         self.game_reward += reward
-        
-        # Also track total rewards across all games (optional)
-        if not hasattr(self, 'total_reward'):
-            self.total_reward = 0
-        self.total_reward += reward
 
-        # Update display
-        self.update_ui()
-        self.clock.tick(c.FPS * self.game_speed)
+        # Update display less frequently for speed
+        if self.frame_iteration % 5 == 0:  # Update every 5 frames
+            self.update_ui()
+            self.clock.tick(c.FPS * self.game_speed)
 
         return reward, game_over, self.world.level
 
@@ -280,15 +365,46 @@ class TowerDefenseAI:
             
         return position_score
 
+    def _calculate_timing_bonus(self):
+        """Calculate bonus based on when turret is placed"""
+        enemy_count = len(self.enemy_group)
+        if enemy_count > 5:  # Many enemies approaching
+            return 2.0
+        elif enemy_count > 2:  # Some enemies
+            return 1.0
+        elif self.world.spawned_enemies < len(self.world.enemy_list) // 2:  # Early game
+            return 1.5
+        else:
+            return 0.5
+
 def train():
     plot_scores = []
     plot_mean_scores = []
     plot_rewards = []
     total_score = 0
-    total_rewards = 0  # Track cumulative rewards for mean calculation
+    total_rewards = 0
     record = 0
     agent = TowerDefenseAgent()
     game = TowerDefenseAI()
+    
+    # Initialize with more aggressive exploration for better learning
+    agent.epsilon = 90  # Increase initial exploration rate
+    
+    # Add performance tracking
+    recent_scores = []
+    recent_rewards = []
+    recent_levels = []
+    performance_window = 10  # Track last 10 games
+    
+    # Initialize training analyzer
+    try:
+        from td_helper import TrainingAnalyzer
+        analyzer = TrainingAnalyzer(agent)
+        has_analyzer = True
+        print("Training analyzer initialized for enhanced monitoring")
+    except Exception as e:
+        print(f"Warning: Training analyzer not available: {e}")
+        has_analyzer = False
     
     while True:
         # Get old state
@@ -302,30 +418,106 @@ def train():
         reward, done, score = game.play_step(final_move)
         state_new = agent.get_state(game.world, game.enemy_group, game.turret_group)
 
-        # Train short memory
-        agent.train_short_memory(state_old, final_move, reward, state_new, done)
+        # Train short memory with enhanced error checking
+        try:
+            loss = agent.train_short_memory(state_old, final_move, reward, state_new, done)
+            if loss is not None and loss > 10:
+                print(f"Warning: High loss detected: {loss}. Skipping this update.")
+                loss = None
+        except Exception as e:
+            print(f"Error during short memory training: {e}")
+            loss = None
 
-        # Remember
+        # Remember experience for batch learning
         agent.remember(state_old, final_move, reward, state_new, done)
 
         if done:
-            # Train long memory
-            game.reset()
+            # Train long memory (batch learning) and get loss
+            try:
+                long_memory_loss = agent.train_long_memory()
+            except Exception as e:
+                print(f"Error during long memory training: {e}")
+                long_memory_loss = None
+            
+            # Track performance metrics
+            current_reward = game.game_reward
+            current_level = game.world.level
+            current_enemies_killed = game.enemies_killed
+            
+            # Reset game for next episode (do this before updating stats)
+            valid_positions = game.reset()
             agent.n_games += 1
-            agent.train_long_memory()
+            
+            # Update tracking lists
+            recent_scores.append(score)
+            recent_rewards.append(current_reward)
+            recent_levels.append(current_level)
+            
+            # Keep only recent performance for better trend analysis
+            if len(recent_scores) > performance_window:
+                recent_scores.pop(0)
+                recent_rewards.pop(0)
+                recent_levels.pop(0)
 
+            # Save model if performance improved
             if score > record:
                 record = score
-                agent.save_model()            # Scale up rewards for better visualization (multiplier of 10)
-            scaled_reward = game.game_reward * 10
-              # Track mean rewards too
-            total_rewards += scaled_reward
-            mean_reward = total_rewards / agent.n_games
-            
-            print(f'Game {agent.n_games}, Score {score}, Reward {scaled_reward:.1f}, Mean Reward {mean_reward:.1f}, Record: {record}')
+                agent.save_model(f'td_model_best_{score}.pth')
+                print(f"New record model saved! Score: {score}")
+                
+            # Also save periodically
+            if agent.n_games % 20 == 0:  # Save more frequently
+                agent.save_model(f'td_model_checkpoint_{agent.n_games}.pth')
+                print(f"Checkpoint saved at game {agent.n_games}")
+                
+                # Analyze model every 20 games
+                if has_analyzer:
+                    analyzer.save_model_analysis(agent.model)
 
+            # Calculate statistics for logging and visualization
+            total_rewards += current_reward
+            mean_reward = total_rewards / agent.n_games
+            recent_avg_score = sum(recent_scores) / len(recent_scores) if recent_scores else 0
+            recent_avg_reward = sum(recent_rewards) / len(recent_rewards) if recent_rewards else 0
+            recent_avg_level = sum(recent_levels) / len(recent_levels) if recent_levels else 0
+            
+            # Adaptive epsilon decay based on performance
+            if agent.n_games % 5 == 0 and agent.n_games > 0:
+                if recent_avg_score > record * 0.8:
+                    # If doing well, reduce exploration more aggressively
+                    agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.99)
+                elif agent.n_games > 100 and recent_avg_score < record * 0.4:
+                    # If doing poorly after many games, increase exploration slightly
+                    agent.epsilon = min(90, agent.epsilon * 1.02)
+                    print(f"Increasing exploration to epsilon={agent.epsilon:.1f} due to poor performance")
+                    
+            # Enhanced logging with more metrics for better debugging
+            print(f'Game {agent.n_games:4d} | '
+                  f'Score: {score:3d} | '
+                  f'Level: {current_level:2d} | '
+                  f'Enemies killed: {current_enemies_killed:3d} | '
+                  f'Reward: {current_reward:7.1f} | '
+                  f'Recent Avg Score: {recent_avg_score:5.1f} | '
+                  f'Recent Avg Level: {recent_avg_level:4.1f} | '
+                  f'Recent Avg Reward: {recent_avg_reward:7.1f} | '
+                  f'Epsilon: {agent.epsilon:4.1f} | '
+                  f'Record: {record}')
+            
+            # Show active perks if any
+            if hasattr(game, 'chosen_perks') and game.chosen_perks:
+                print(f'  Active perks: {", ".join(game.chosen_perks)}')
+            
+            # Print training losses occasionally for monitoring
+            if agent.n_games % 10 == 0 and long_memory_loss:
+                print(f'  Training Loss: {long_memory_loss:.4f}')
+                
+            # Log stats with the analyzer
+            if has_analyzer:
+                analyzer.log_game_stats(agent.n_games, score, current_level, current_reward, agent.epsilon)
+
+            # Update plots for visualization
             plot_scores.append(score)
-            plot_rewards.append(scaled_reward)  # Use scaled per-game rewards for plotting
+            plot_rewards.append(current_reward)
             total_score += score
             mean_score = total_score / agent.n_games
             plot_mean_scores.append(mean_score)
