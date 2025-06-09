@@ -38,15 +38,16 @@ class TowerDefenseAgent:
         self.alpha = 0.7    # Increased priority exponent
         self.beta = 0.5     # Higher initial bias correction
         self.beta_increment = 0.00002  # Faster beta increase
-          # Calculate action space
+        
+        # Calculate action space
         self.action_size = c.ROWS * c.COLS + 20
         # Updated state size to match enhanced state representation:
         # 8 basic features + 20*3 enemy features + 10*4 turret features = 8 + 60 + 40 = 108
-        self.state_size = 108
-        
+        self.state_size = 108        
         print(f"Action space size: {self.action_size}")
         print(f"State space size: {self.state_size}")
-          # Improved network architecture with noisy layers
+        
+        # Improved network architecture with noisy layers
         self.model = TowerDefenseQNet(self.state_size, 512, self.action_size)  # Larger network
         self.trainer = TowerDefenseTrainer(self.model, lr=LR, gamma=self.gamma)
         
@@ -350,21 +351,34 @@ class TowerDefenseAgent:
         try:
             # Noisy networks approach - add noise to encourage exploration
             use_noise = self.n_games < 100 or random.random() < 0.1
-            
-            # Improved exploration strategy with UCB-like selection
+              # Improved exploration strategy with temperature scaling
             if random.randint(0, 100) < self.epsilon:
-                # Adaptive exploration based on game phase and curriculum
+                # Temperature-scaled exploration based on action diversity
+                temperature = getattr(self, 'action_temperature', 1.0)
+                
+                # Adaptive exploration based on game phase, curriculum, and performance
                 difficulty_factor = min(1.0, self.difficulty_level / 5.0)
                 
+                # Dynamic action type selection based on performance
                 if self.n_games < 30:
-                    # Early game: focus on placement
+                    # Early game: focus on placement with some randomness
                     action_type = "place" if random.random() < (0.95 - difficulty_factor * 0.1) else "upgrade"
                 elif self.n_games < 100:
-                    # Mid game: balanced approach
-                    action_type = "place" if random.random() < (0.8 - difficulty_factor * 0.1) else "upgrade"
+                    # Mid game: balanced approach with performance consideration
+                    recent_performance = sum(self.recent_performance[-5:]) / min(len(self.recent_performance), 5) if hasattr(self, 'recent_performance') and self.recent_performance else 5
+                    if recent_performance > 12:  # Good performance - more strategic
+                        action_type = "place" if random.random() < (0.70 - difficulty_factor * 0.1) else "upgrade"
+                    else:  # Poor performance - more placement focus
+                        action_type = "place" if random.random() < (0.85 - difficulty_factor * 0.1) else "upgrade"
                 else:
-                    # Late game: more strategic upgrades
-                    action_type = "place" if random.random() < (0.65 - difficulty_factor * 0.1) else "upgrade"
+                    # Late game: performance-adaptive strategy
+                    recent_performance = sum(self.recent_performance[-5:]) / min(len(self.recent_performance), 5) if hasattr(self, 'recent_performance') and self.recent_performance else 5
+                    if recent_performance > 15:  # High performance - strategic upgrades
+                        action_type = "place" if random.random() < (0.50 - difficulty_factor * 0.15) else "upgrade"
+                    elif recent_performance > 10:  # Medium performance - balanced
+                        action_type = "place" if random.random() < (0.70 - difficulty_factor * 0.1) else "upgrade"
+                    else:  # Low performance - back to basics
+                        action_type = "place" if random.random() < (0.80 - difficulty_factor * 0.05) else "upgrade"
                 
                 if action_type == "place" and valid_positions:
                     # Smart placement selection - prefer positions near existing turrets or key locations
@@ -401,13 +415,18 @@ class TowerDefenseAgent:
                     
                     if len(state_tensor.shape) == 1:
                         state_tensor = state_tensor.unsqueeze(0)
-                    
-                    # Get Q-values with optional noise
+                      # Enhanced Q-value processing with temperature scaling
                     q_values = self.model(state_tensor)[0]
                     
+                    # Apply temperature scaling for more diverse action selection
+                    temperature = getattr(self, 'action_temperature', 1.0)
+                    if temperature != 1.0:
+                        q_values = q_values / temperature
+                    
                     if use_noise:
-                        # Add small amount of noise to Q-values for exploration
-                        noise = torch.randn_like(q_values) * 0.01
+                        # Adaptive noise based on performance and exploration needs
+                        noise_scale = 0.01 * (1.0 + getattr(self, 'plateau_episodes', 0) * 0.5)
+                        noise = torch.randn_like(q_values) * noise_scale
                         q_values = q_values + noise
                     
                     # Enhanced action masking
@@ -426,16 +445,16 @@ class TowerDefenseAgent:
                             upgrade_idx = upgrade_start + i
                             if upgrade_idx < len(mask):
                                 mask[upgrade_idx] = 0
-                    
-                    # Select best action with optional softmax for diversity
+                      # Select best action with optional softmax for diversity
                     masked_q_values = q_values + mask
                     
                     if torch.max(masked_q_values) == float('-inf'):
                         move = valid_positions[0] if valid_positions else 0
                     else:
-                        if use_noise and random.random() < 0.1:
-                            # Occasionally use softmax selection for diversity
-                            probs = F.softmax(masked_q_values / 0.1, dim=0)
+                        if use_noise and random.random() < (0.15 + getattr(self, 'plateau_episodes', 0) * 0.05):
+                            # Dynamic softmax selection probability based on plateau state
+                            temperature = getattr(self, 'action_temperature', 1.0)
+                            probs = F.softmax(masked_q_values / (0.1 * temperature), dim=0)
                             valid_probs = probs[masked_q_values != float('-inf')]
                             if len(valid_probs) > 0:
                                 valid_indices = torch.where(masked_q_values != float('-inf'))[0]
@@ -497,20 +516,25 @@ class TowerDefenseAgent:
         self.recent_performance.append(score)
         if len(self.recent_performance) > 20:
             self.recent_performance.pop(0)
-        
-        # Plateau detection and curriculum learning
-        if len(self.recent_scores) >= 20:
-            recent_avg = sum(self.recent_scores[-10:]) / 10
-            older_avg = sum(self.recent_scores[-20:-10]) / 10
+          # Plateau detection with improved sensitivity
+        if len(self.recent_scores) >= 30:  # Increased window for better detection
+            recent_avg = sum(self.recent_scores[-15:]) / 15  # More recent window
+            older_avg = sum(self.recent_scores[-30:-15]) / 15  # Older comparison window
             
-            if recent_avg <= older_avg + 0.5:  # No significant improvement
+            # More sensitive plateau detection for higher levels
+            improvement_threshold = 0.3 if recent_avg < 10 else 0.5  # Stricter for advanced levels
+            
+            if recent_avg <= older_avg + improvement_threshold:
                 self.plateau_counter += 1
-                if self.plateau_counter >= 10:  # Plateau detected
+                if self.plateau_counter >= 8:  # Reduced threshold for faster response
                     self.handle_plateau()
                     self.plateau_counter = 0
             else:
                 self.plateau_counter = 0
                 self.last_improvement = self.n_games
+                # Reset plateau episodes when improvement is detected
+                if hasattr(self, 'plateau_episodes'):
+                    self.plateau_episodes = 0
         
         # Curriculum learning progression
         if self.n_games % self.games_per_difficulty == 0:
@@ -536,38 +560,67 @@ class TowerDefenseAgent:
         # Save model periodically
         if self.n_games % 20 == 0:
             self.save_model(f"td_model_checkpoint_{self.n_games}.pth")
-            
-        # Save best model based on score thresholds
+              # Save best model based on score thresholds
         if score > 15:
             self.save_model(f'td_model_best_{score}.pth')
             print(f"🏆 Best model saved with score: {score}")
             
     def handle_plateau(self):
-        """Handle plateau by adjusting hyperparameters"""
-        print(f"🚨 Plateau detected at game {self.n_games}! Implementing fixes...")
+        """Enhanced plateau handling with progressive difficulty scaling"""
+        print(f"🚨 Plateau detected at game {self.n_games}! Implementing advanced fixes...")
         
-        # Boost exploration
-        self.epsilon = min(70, self.epsilon * 1.8)
+        # Progressive exploration boost based on plateau duration
+        if not hasattr(self, 'plateau_episodes'):
+            self.plateau_episodes = 0
+        self.plateau_episodes += 1
         
-        # Increase learning rate temporarily
+        # Escalating responses based on plateau duration
+        if self.plateau_episodes <= 3:
+            # Initial response: moderate exploration boost
+            self.epsilon = min(85, self.epsilon * 2.0)
+            lr_multiplier = 1.8
+        elif self.plateau_episodes <= 6:
+            # Stronger response: aggressive exploration + memory refresh
+            self.epsilon = min(95, self.epsilon * 2.5)
+            lr_multiplier = 2.2
+            # Clear more old experiences
+            if len(self.memory) > 30000:
+                remove_count = len(self.memory) // 2
+                for _ in range(remove_count):
+                    self.memory.popleft()
+                    if self.priorities:
+                        self.priorities.popleft()
+                print(f"   🧹 Cleared {remove_count} old experiences for fresh learning")
+        else:
+            # Nuclear option: reset exploration completely
+            self.epsilon = 99
+            lr_multiplier = 3.0
+            # Reset network noise and add curriculum bonus
+            if hasattr(self.trainer, 'reset_noise'):
+                self.trainer.reset_noise()
+            print("   🔄 Nuclear reset: Maximum exploration mode activated")
+        
+        # Dynamic learning rate adjustment
         for param_group in self.trainer.optimizer.param_groups:
-            param_group['lr'] = min(0.001, param_group['lr'] * 1.5)
+            new_lr = min(0.002, param_group['lr'] * lr_multiplier)
+            param_group['lr'] = new_lr
         
-        # Reset priority parameters
-        self.alpha = min(1.0, self.alpha * 1.1)
-        self.beta = max(0.4, self.beta * 0.9)
+        # Enhanced priority parameter adjustment
+        self.alpha = min(1.0, self.alpha * (1.0 + 0.2 * self.plateau_episodes))
+        self.beta = max(0.3, self.beta * (0.9 - 0.1 * min(self.plateau_episodes, 3)))
         
-        # Clear some old experiences to make room for new exploration
-        if len(self.memory) > 50000:
-            # Remove oldest 25% of experiences
-            remove_count = len(self.memory) // 4
-            for _ in range(remove_count):
-                self.memory.popleft()
-                if self.priorities:
-                    self.priorities.popleft()
+        # Reward shaping intensity boost for harder scenarios
+        if hasattr(self.reward_shaper, 'plateau_boost'):
+            self.reward_shaper.plateau_boost = 1.0 + (0.3 * self.plateau_episodes)
         
-        print(f"   New epsilon: {self.epsilon:.1f}")
-        print(f"   New LR: {self.trainer.optimizer.param_groups[0]['lr']:.6f}")
-        print(f"   New alpha: {self.alpha:.3f}")
-        print(f"   Cleared {remove_count if len(self.memory) > 50000 else 0} old experiences")
+        # Temperature scaling for more diverse action selection
+        if not hasattr(self, 'action_temperature'):
+            self.action_temperature = 1.0
+        self.action_temperature = min(2.0, 1.0 + (0.2 * self.plateau_episodes))
+        
+        print(f"   📈 Plateau episode #{self.plateau_episodes}")
+        print(f"   🎯 New epsilon: {self.epsilon:.1f}")
+        print(f"   📚 New LR: {self.trainer.optimizer.param_groups[0]['lr']:.6f}")
+        print(f"   ⚖️  New alpha: {self.alpha:.3f}")
+        print(f"   🌡️  Action temperature: {getattr(self, 'action_temperature', 1.0):.2f}")
 

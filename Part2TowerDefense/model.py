@@ -228,8 +228,7 @@ class TowerDefenseTrainer:
             if self.step_count % self.target_update_freq == 0:
                 self.target_model.load_state_dict(self.model.state_dict())
             
-            self.step_count += 1
-            
+            self.step_count += 1            
             return loss.item()
             
         except Exception as e:
@@ -245,7 +244,8 @@ class TowerDefenseTrainer:
                     param_group['lr'] *= 0.95
                     param_group['lr'] = max(param_group['lr'], 1e-6)
             elif loss < self.prev_loss * 0.9:  # Loss decreased significantly
-                # Slightly increase learning rate                for param_group in self.optimizer.param_groups:
+                # Slightly increase learning rate
+                for param_group in self.optimizer.param_groups:
                     param_group['lr'] *= 1.01
                     param_group['lr'] = min(param_group['lr'], 0.01)
         
