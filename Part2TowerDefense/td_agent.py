@@ -9,43 +9,42 @@ import os
 import math
 import torch.nn.functional as F
 
-# PLATEAU FIX: Optimized hyperparameters for stable learning
-MAX_MEMORY = 50_000   # REDUCED: Smaller memory for more stable learning
-BATCH_SIZE = 64       # INCREASED: Larger batches for more stable updates  
-LR = 0.0001           # REDUCED: Much lower learning rate for fine-tuning
+# STABILITY FIX: Optimized hyperparameters for stable learning
+MAX_MEMORY = 100_000   # INCREASED: Larger memory for better stability
+BATCH_SIZE = 128       # INCREASED: Larger batches for more stable updates  
+LR = 0.00005           # FURTHER REDUCED: Very low learning rate for fine-tuning
 PRIORITIZED_REPLAY = True  # Keep using prioritized experience replay
-NOISY_NETWORKS = True  # Add noise for better exploration
+NOISY_NETWORKS = False  # DISABLED: Reduce noise for more stable learning
 
-class TowerDefenseAgent:
+class TowerDefenseAgent:    
     def __init__(self):
         self.n_games = 0
-        # PLATEAU FIX: Much more stable exploration strategy  
-        self.epsilon = 10   # REDUCED: Start much lower for stable exploitation
-        self.epsilon_min = 0.3  # REDUCED: Lower minimum for better exploitation
-        self.epsilon_decay = 0.9995  # SLOWER: More gradual decay for stability
-        self.epsilon_cycle_length = 150  # Longer cycles for stability
-        self.base_epsilon = 1
-        self.gamma = 0.995  # Even higher discount for long-term thinking
+        # STABILITY FIX: Conservative exploration strategy  
+        self.epsilon = 5   # REDUCED: Much lower starting epsilon
+        self.epsilon_min = 0.1  # REDUCED: Very low minimum for exploitation
+        self.epsilon_decay = 0.9998  # SLOWER: Very gradual decay
+        self.epsilon_cycle_length = 200  # Longer cycles for stability
+        self.base_epsilon = 0.5  # REDUCED: Lower base for resets
+        self.gamma = 0.99  # Standard discount factor
         
         # Performance-based epsilon management
         self.best_recent_score = 0
-        self.performance_window = 50
-        self.stable_performance_threshold = 0.8
+        self.performance_window = 100  # INCREASED: Longer window for stability
+        self.stable_performance_threshold = 0.85  # INCREASED: Higher threshold
         
-        # Curriculum learning parameters
+        # Curriculum learning parameters - more conservative
         self.difficulty_level = 1
-        self.games_per_difficulty = 20
-        self.performance_threshold = 8  # Score needed to advance difficulty
-          # Experience replay with improved priorities
+        self.games_per_difficulty = 50  # INCREASED: More games per difficulty
+        self.performance_threshold = 10  # INCREASED: Higher threshold        # Experience replay with conservative priorities
         self.memory = deque(maxlen=MAX_MEMORY)
         self.priorities = deque(maxlen=MAX_MEMORY)
         # Elite experience buffer for high-performance episodes
-        self.elite_memory = deque(maxlen=10000)  # Store best experiences
-        self.elite_threshold = 12  # Score threshold for elite experiences
+        self.elite_memory = deque(maxlen=20000)  # INCREASED: More elite experiences
+        self.elite_threshold = 10  # REDUCED: Lower threshold for more elite experiences
         
-        self.alpha = 0.6    # Reduced for more stability
-        self.beta = 0.4     # Lower start for gradual bias correction
-        self.beta_increment = 0.00001  # Much slower beta increase
+        self.alpha = 0.4    # REDUCED: Much lower for stability
+        self.beta = 0.3     # REDUCED: Lower start
+        self.beta_increment = 0.000005  # SLOWER: Much slower beta increase
         
         # Calculate action space
         self.action_size = c.ROWS * c.COLS + 20
@@ -58,10 +57,9 @@ class TowerDefenseAgent:
         # Improved network architecture with noisy layers
         self.model = TowerDefenseQNet(self.state_size, 512, self.action_size)  # Larger network
         self.trainer = TowerDefenseTrainer(self.model, lr=LR, gamma=self.gamma)
-        
-        # Multi-step learning and double DQN
-        self.target_update_frequency = 50  # More frequent target updates
-        self.multi_step_n = 3  # 3-step learning for better credit assignment
+          # Multi-step learning and double DQN - more stable
+        self.target_update_frequency = 100  # INCREASED: Less frequent updates for stability
+        self.multi_step_n = 2  # REDUCED: Simpler learning
         self.double_dqn = True  # Use Double DQN for reduced overestimation
         self.steps_done = 0
           # Tracking metrics for introspection
