@@ -328,16 +328,10 @@ class TowerDefenseAI:
         # Update display less frequently for speed
         if self.frame_iteration % 5 == 0:  # Update every 5 frames
             self.update_ui()
-            self.clock.tick(c.FPS * self.game_speed)        # Adaptive reward clipping based on game level for better learning signal
-        if self.world.level >= 15:
-            # Higher range for advanced levels to preserve strong learning signals
-            reward = max(-300, min(400, reward))
-        elif self.world.level >= 10:
-            # Medium range for intermediate levels
-            reward = max(-250, min(300, reward))
-        else:
-            # Standard range for early levels
-            reward = max(-200, min(200, reward))
+            self.clock.tick(c.FPS * self.game_speed)
+
+        # More reasonable reward clipping to prevent extreme values only
+        reward = max(-200, min(200, reward))  # Increased range from [-50, 50] to [-200, 200]
         
         return reward, game_over, self.world.level
 
@@ -454,18 +448,11 @@ def train():
                     print(f"Warning: High loss detected: {loss:.4f}. This may indicate instability.")
             except Exception as e:
                 print(f"Error during short memory training: {e}")
-                loss = None            # Remember experience for batch learning with enhanced reward shaping
+                loss = None
+
+            # Remember experience for batch learning with error handling
             try:
-                # Prepare game stats for reward shaping
-                game_stats = {
-                    'score': score,
-                    'level': game.world.level,
-                    'money': game.world.money,
-                    'health': game.world.health,
-                    'enemies_killed': game.enemies_killed,
-                    'game_over': done
-                }
-                agent.remember(state_old, final_move, reward, state_new, done, game_stats)
+                agent.remember(state_old, final_move, reward, state_new, done)
             except Exception as e:
                 print(f"Error storing experience: {e}")
 
@@ -505,33 +492,20 @@ def train():
                 recent_avg_score = sum(recent_scores) / len(recent_scores) if recent_scores else 0
                 recent_avg_reward = sum(recent_rewards) / len(recent_rewards) if recent_rewards else 0
                 recent_avg_level = sum(recent_levels) / len(recent_levels) if recent_levels else 0
-                  # Enhanced adaptive epsilon adjustment based on performance trends
+                
+                # Adaptive epsilon adjustment based on performance trends
                 if agent.n_games % 5 == 0 and agent.n_games > 20:  # Wait for enough data
                     # Dynamic adjustment based on recent performance relative to best
                     if record > 0:
                         performance_ratio = recent_avg_score / record
                         
-                        # More sophisticated epsilon management for high-level play
-                        if recent_avg_score >= 15:  # High-level performance zone
-                            if performance_ratio > 0.95:  # Excellent performance
-                                agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.97)
-                            elif performance_ratio > 0.85:  # Good performance
-                                agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.98)
-                            elif performance_ratio < 0.75:  # Declining at high level
-                                agent.epsilon = min(85, agent.epsilon * 1.08)
-                                print(f"⚠️ High-level performance decline detected! Boosting exploration to {agent.epsilon:.1f}")
-                        elif recent_avg_score >= 10:  # Mid-level performance
-                            if performance_ratio > 0.9:  # Performing very well
-                                agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.98)
-                            elif performance_ratio < 0.6:
-                                agent.epsilon = min(70, agent.epsilon * 1.05)
-                                print(f"⚠️ Mid-level performance issue! Increasing exploration to {agent.epsilon:.1f}")
-                        else:  # Low-level performance - original logic
-                            if performance_ratio > 0.9:
-                                agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.98)
-                            elif performance_ratio < 0.5 and agent.n_games > 30:
-                                agent.epsilon = min(60, agent.epsilon * 1.02)
-                                print(f"⚠️ Increasing exploration to epsilon={agent.epsilon:.1f} due to poor performance")
+                        if performance_ratio > 0.9:  # Performing very well
+                            # Reduce exploration more quickly
+                            agent.epsilon = max(agent.epsilon_min, agent.epsilon * 0.98)
+                        elif performance_ratio < 0.5 and agent.n_games > 30:
+                            # Increase exploration if doing poorly after initial learning
+                            agent.epsilon = min(60, agent.epsilon * 1.02)
+                            print(f"⚠️ Increasing exploration to epsilon={agent.epsilon:.1f} due to poor performance")
                 
                 # Save best model
                 if score > record:

@@ -9,35 +9,43 @@ import os
 import math
 import torch.nn.functional as F
 
-# Improved hyperparameters for better plateau breaking
-MAX_MEMORY = 100_000  # Keep large memory
-BATCH_SIZE = 32       # Even smaller batch for more frequent updates
-LR = 0.0005           # Increased learning rate for faster adaptation
+# PLATEAU FIX: Optimized hyperparameters for stable learning
+MAX_MEMORY = 50_000   # REDUCED: Smaller memory for more stable learning
+BATCH_SIZE = 64       # INCREASED: Larger batches for more stable updates  
+LR = 0.0001           # REDUCED: Much lower learning rate for fine-tuning
 PRIORITIZED_REPLAY = True  # Keep using prioritized experience replay
 NOISY_NETWORKS = True  # Add noise for better exploration
 
 class TowerDefenseAgent:
     def __init__(self):
         self.n_games = 0
-        # Improved exploration strategy with cyclic decay
-        self.epsilon = 80   # Start high but not extreme
-        self.epsilon_min = 2  # Much lower minimum for better exploitation
-        self.epsilon_decay = 0.996  # Faster decay for quicker exploitation
-        self.epsilon_cycle_length = 100  # Reset epsilon every 100 games
-        self.base_epsilon = 2
-        self.gamma = 0.99  # Higher discount for longer-term thinking
+        # PLATEAU FIX: Much more stable exploration strategy  
+        self.epsilon = 10   # REDUCED: Start much lower for stable exploitation
+        self.epsilon_min = 0.3  # REDUCED: Lower minimum for better exploitation
+        self.epsilon_decay = 0.9995  # SLOWER: More gradual decay for stability
+        self.epsilon_cycle_length = 150  # Longer cycles for stability
+        self.base_epsilon = 1
+        self.gamma = 0.995  # Even higher discount for long-term thinking
+        
+        # Performance-based epsilon management
+        self.best_recent_score = 0
+        self.performance_window = 50
+        self.stable_performance_threshold = 0.8
         
         # Curriculum learning parameters
         self.difficulty_level = 1
         self.games_per_difficulty = 20
         self.performance_threshold = 8  # Score needed to advance difficulty
-        
-        # Experience replay with improved priorities
+          # Experience replay with improved priorities
         self.memory = deque(maxlen=MAX_MEMORY)
         self.priorities = deque(maxlen=MAX_MEMORY)
-        self.alpha = 0.7    # Increased priority exponent
-        self.beta = 0.5     # Higher initial bias correction
-        self.beta_increment = 0.00002  # Faster beta increase
+        # Elite experience buffer for high-performance episodes
+        self.elite_memory = deque(maxlen=10000)  # Store best experiences
+        self.elite_threshold = 12  # Score threshold for elite experiences
+        
+        self.alpha = 0.6    # Reduced for more stability
+        self.beta = 0.4     # Lower start for gradual bias correction
+        self.beta_increment = 0.00001  # Much slower beta increase
         
         # Calculate action space
         self.action_size = c.ROWS * c.COLS + 20
@@ -77,9 +85,30 @@ class TowerDefenseAgent:
         
         # Action history for exploration bonus
         self.action_history = deque(maxlen=100)
+          # Anti-catastrophic forgetting mechanisms
+        self.knowledge_consolidation = True
+        self.stable_policy_buffer = deque(maxlen=1000)  # Store stable high-level policies
+        self.performance_regression_counter = 0
+        self.last_high_score = 0
+        self.consolidation_frequency = 20  # How often to consolidate knowledge
         
-        # Experience buffer for hindsight experience replay
-        self.hindsight_buffer = deque(maxlen=1000)
+        # Performance tracking for regression detection
+        self.score_history = deque(maxlen=100)
+        self.level_history = deque(maxlen=100)
+        self.regression_threshold = 0.7  # If performance drops below 70% of recent best
+        
+        # Meta-learning: Track performance patterns
+        self.performance_history = deque(maxlen=100)
+        self.strategy_history = deque(maxlen=50)
+        self.breakthrough_attempts = 0
+        
+        # Advanced exploration parameters
+        self.exploration_momentum = 0.0
+        self.strategy_adaptation_rate = 0.1
+        
+        # Breakthrough mode tracking
+        self.breakthrough_mode = False
+        self.games_since_breakthrough = 0
 
     def get_state(self, world, enemy_group, turret_group):
         """Get current state with increased debug info"""
@@ -169,10 +198,16 @@ class TowerDefenseAgent:
             
             # Add small constant to prevent zero priority
             priority = (td_error + 0.1) ** self.alpha
-            
-            # Store experience with enhanced reward
+              # Store experience with enhanced reward
             self.memory.append((state, action, total_reward, next_state, done))
             self.priorities.append(priority)
+            
+            # Store elite experiences for anti-catastrophic forgetting
+            if game_stats and game_stats.get('level', 0) >= self.elite_threshold:
+                elite_priority = priority * 2.0  # Higher priority for elite experiences
+                self.elite_memory.append((state, action, total_reward, next_state, done, elite_priority))
+                if len(self.elite_memory) > 8000:  # Keep only recent elite experiences
+                    self.elite_memory.popleft()
             
             # Track action distribution and history
             action_idx = np.argmax(action) if isinstance(action, np.ndarray) and action.size > 1 else action
@@ -190,47 +225,76 @@ class TowerDefenseAgent:
             import traceback
             traceback.print_exc()
     def train_long_memory(self):
-        """Train on a batch of experiences with improved prioritized replay"""
+        """Enhanced training with elite experience replay and anti-catastrophic forgetting"""
         if len(self.memory) < BATCH_SIZE:
             return None
         
         try:
+            # Regular experience replay
+            loss = self._train_batch(self.memory, self.priorities, "regular")
+              # Elite experience replay to prevent catastrophic forgetting
+            if len(self.elite_memory) >= BATCH_SIZE // 2:
+                elite_experiences = list(self.elite_memory)
+                elite_priorities = [exp[5] for exp in elite_experiences]  # Extract priorities
+                elite_batch = [(exp[0], exp[1], exp[2], exp[3], exp[4]) for exp in elite_experiences]  # Remove priority
+                
+                elite_loss = self._train_batch(elite_batch, elite_priorities, "elite")
+                if elite_loss is not None:
+                    loss = (loss + elite_loss * 0.5) / 1.5 if loss is not None else elite_loss
+                    
+            return loss
+        except Exception as e:
+            print(f"Error in train_long_memory: {e}")
+            return None
+    
+    def _train_batch(self, memory_buffer, priority_buffer, batch_type="regular"):
+        """Train on a batch of experiences with prioritized sampling"""
+        if len(memory_buffer) < BATCH_SIZE:
+            return None
+            
+        try:
             # Increase beta over time to reduce sampling bias
             self.beta = min(1.0, self.beta + self.beta_increment)
             
-            if PRIORITIZED_REPLAY and self.priorities:
-                # Get normalized probabilities with temperature scaling
-                probs = np.array(self.priorities)
-                # Add temperature scaling to control exploration/exploitation in replay
-                temperature = max(0.5, 1.0 - (self.n_games / 200))
-                probs = np.power(probs, 1.0 / temperature)
-                probs = probs / np.sum(probs)
-                
-                # Sample indices according to priorities
-                indices = np.random.choice(
-                    len(self.memory), 
-                    size=min(BATCH_SIZE, len(self.memory)),
-                    replace=False, 
-                    p=probs
-                )
-                
-                # Calculate importance sampling weights
-                weights = (len(self.memory) * probs[indices]) ** (-self.beta)
-                weights = weights / np.max(weights)  # Normalize weights
-                weights = torch.tensor(weights, dtype=torch.float32)
-                
-                # Sample experiences
-                batch = [self.memory[idx] for idx in indices]
+            # Sample based on batch type
+            if batch_type == "elite":
+                # For elite experiences, use uniform sampling to preserve all high-level strategies
+                batch_size = min(BATCH_SIZE // 2, len(memory_buffer))
+                indices = np.random.choice(len(memory_buffer), size=batch_size, replace=False)
+                batch = [memory_buffer[idx] for idx in indices]
+                weights = torch.ones(len(batch))  # Equal weights for elite experiences
             else:
-                # Standard uniform sampling
-                indices = np.random.choice(
-                    len(self.memory), 
-                    size=min(BATCH_SIZE, len(self.memory)),
-                    replace=False
-                )
-                batch = [self.memory[idx] for idx in indices]
-                weights = torch.ones(len(batch))
-                
+                # Regular prioritized sampling
+                if PRIORITIZED_REPLAY and priority_buffer:
+                    probs = np.array(priority_buffer)
+                    # Reduce temperature for more stability
+                    temperature = max(0.8, 1.2 - (self.n_games / 300))
+                    probs = np.power(probs, 1.0 / temperature)
+                    probs = probs / np.sum(probs)
+                    
+                    indices = np.random.choice(
+                        len(memory_buffer), 
+                        size=min(BATCH_SIZE, len(memory_buffer)),
+                        replace=False, 
+                        p=probs
+                    )
+                    
+                    # Calculate importance sampling weights
+                    weights = (len(memory_buffer) * probs[indices]) ** (-self.beta)
+                    weights = weights / np.max(weights)
+                    weights = torch.tensor(weights, dtype=torch.float32)
+                    
+                    batch = [memory_buffer[idx] for idx in indices]
+                else:
+                    # Standard uniform sampling
+                    indices = np.random.choice(
+                        len(memory_buffer), 
+                        size=min(BATCH_SIZE, len(memory_buffer)),
+                        replace=False
+                    )
+                    batch = [memory_buffer[idx] for idx in indices]
+                    weights = torch.ones(len(batch))
+                    
             # Unpack batch
             states, actions, rewards, next_states, dones = zip(*batch)
             
@@ -255,25 +319,24 @@ class TowerDefenseAgent:
             # Train the model with importance sampling weights
             loss = self.trainer.train_step(states, actions, rewards, next_states, dones, weights)
             
-            # Update priorities with new TD errors (if available)
+            # Update EMA loss and adaptive learning rate
             if loss is not None:
-                # Update EMA loss
                 if self.ema_loss is None:
                     self.ema_loss = loss
                 else:
-                    self.ema_loss = 0.95 * self.ema_loss + 0.05 * loss
+                    self.ema_loss = 0.98 * self.ema_loss + 0.02 * loss  # More stable EMA
                 
-                # Adaptive learning rate based on loss
+                # Conservative adaptive learning rate
                 if hasattr(self.trainer, 'adaptive_lr_step'):
                     self.trainer.adaptive_lr_step(loss)
-                
-                # Log progress occasionally
-                if self.debug_counter % 200 == 0:
-                    print(f"Training progress - EMA Loss: {self.ema_loss:.6f}, Beta: {self.beta:.3f}, Temp: {temperature:.3f}")
+                    
+                # Log progress for elite batches
+                if batch_type == "elite" and self.debug_counter % 100 == 0:
+                    print(f"Elite batch training - Loss: {loss:.6f}, Batch size: {len(batch)}")
                     
             return loss
         except Exception as e:
-            print(f"Error in train_long_memory: {e}")
+            print(f"Error in _train_batch ({batch_type}): {e}")
             return None
     
     def train_short_memory(self, state, action, reward, next_state, done):
@@ -515,18 +578,17 @@ class TowerDefenseAgent:
             self.recent_performance = []
         self.recent_performance.append(score)
         if len(self.recent_performance) > 20:
-            self.recent_performance.pop(0)
-          # Plateau detection with improved sensitivity
-        if len(self.recent_scores) >= 30:  # Increased window for better detection
-            recent_avg = sum(self.recent_scores[-15:]) / 15  # More recent window
-            older_avg = sum(self.recent_scores[-30:-15]) / 15  # Older comparison window
+            self.recent_performance.pop(0)        # Plateau detection with improved sensitivity
+        if len(self.recent_scores) >= 20:  # Faster detection with smaller window
+            recent_avg = sum(self.recent_scores[-10:]) / 10  # Very recent window
+            older_avg = sum(self.recent_scores[-20:-10]) / 10  # Older comparison window
             
-            # More sensitive plateau detection for higher levels
-            improvement_threshold = 0.3 if recent_avg < 10 else 0.5  # Stricter for advanced levels
+            # Much more sensitive plateau detection for faster intervention
+            improvement_threshold = 0.1 if recent_avg < 5 else 0.2 if recent_avg < 10 else 0.3
             
             if recent_avg <= older_avg + improvement_threshold:
                 self.plateau_counter += 1
-                if self.plateau_counter >= 8:  # Reduced threshold for faster response
+                if self.plateau_counter >= 5:  # Much faster response (was 8)
                     self.handle_plateau()
                     self.plateau_counter = 0
             else:
@@ -560,64 +622,72 @@ class TowerDefenseAgent:
         # Save model periodically
         if self.n_games % 20 == 0:
             self.save_model(f"td_model_checkpoint_{self.n_games}.pth")
-              # Save best model based on score thresholds
-        if score > 15:
+              # Save best model based on score thresholds        if score > 15:
             self.save_model(f'td_model_best_{score}.pth')
             print(f"🏆 Best model saved with score: {score}")
-            
+    
     def handle_plateau(self):
-        """Enhanced plateau handling with progressive difficulty scaling"""
-        print(f"🚨 Plateau detected at game {self.n_games}! Implementing advanced fixes...")
+        """PLATEAU FIX: Much gentler plateau handling to preserve learned patterns"""
+        print(f"🔄 Plateau detected at game {self.n_games}! Applying gentle fixes...")
         
-        # Progressive exploration boost based on plateau duration
+        # GENTLE plateau breaking - preserve learned knowledge
         if not hasattr(self, 'plateau_episodes'):
             self.plateau_episodes = 0
         self.plateau_episodes += 1
         
-        # Escalating responses based on plateau duration
+        # Much more conservative approach
         if self.plateau_episodes <= 3:
-            # Initial response: moderate exploration boost
-            self.epsilon = min(85, self.epsilon * 2.0)
-            lr_multiplier = 1.8
+            # Gentle exploration boost
+            self.epsilon = min(self.epsilon * 1.2, 8.0)  # REDUCED: Much gentler
+            lr_multiplier = 1.1  # REDUCED: Minimal LR change
+            print(f"   📈 Gentle Response: Slight exploration boost")
         elif self.plateau_episodes <= 6:
-            # Stronger response: aggressive exploration + memory refresh
-            self.epsilon = min(95, self.epsilon * 2.5)
-            lr_multiplier = 2.2
-            # Clear more old experiences
+            # Moderate response
+            self.epsilon = min(self.epsilon * 1.3, 12.0)  # REDUCED: Still conservative
+            lr_multiplier = 1.15
+            
+            # Only clear small portion of memory
             if len(self.memory) > 30000:
-                remove_count = len(self.memory) // 2
+                remove_count = len(self.memory) // 10  # REDUCED: Only 10% instead of 50%
                 for _ in range(remove_count):
                     self.memory.popleft()
                     if self.priorities:
                         self.priorities.popleft()
-                print(f"   🧹 Cleared {remove_count} old experiences for fresh learning")
+                print(f"   🧹 Cleared {remove_count} old experiences (10%)")
+            print(f"   📈 Moderate Response: Small memory refresh")
         else:
-            # Nuclear option: reset exploration completely
-            self.epsilon = 99
-            lr_multiplier = 3.0
-            # Reset network noise and add curriculum bonus
-            if hasattr(self.trainer, 'reset_noise'):
-                self.trainer.reset_noise()
-            print("   🔄 Nuclear reset: Maximum exploration mode activated")
-        
-        # Dynamic learning rate adjustment
+            # Final response - still conservative
+            self.epsilon = min(self.epsilon * 1.5, 15.0)  # REDUCED: Max 15 instead of 99
+            lr_multiplier = 1.2
+            
+            # Reset to slightly easier difficulty instead of level 1
+            self.difficulty_level = max(1, self.difficulty_level - 1)  # REDUCED: -1 instead of -2
+            self.performance_threshold = max(3, self.performance_threshold - 2)  # REDUCED
+            
+            # Minimal memory clearing
+            if len(self.memory) > 25000:
+                remove_count = len(self.memory) // 5  # REDUCED: Only 20% instead of 80%
+                for _ in range(remove_count):
+                    self.memory.popleft()
+                    if self.priorities:
+                        self.priorities.popleft()
+                print(f"   🧹 CONSERVATIVE: Cleared {remove_count} experiences (20%)")
+            
+            print(f"   💫 Conservative Response: Minimal reset")
+
+        # Gentle learning rate adjustment  
         for param_group in self.trainer.optimizer.param_groups:
-            new_lr = min(0.002, param_group['lr'] * lr_multiplier)
+            new_lr = min(0.0005, param_group['lr'] * lr_multiplier)  # REDUCED: Lower max LR
             param_group['lr'] = new_lr
+
+        # Conservative parameter adjustment
+        self.alpha = min(0.8, self.alpha * 1.1)  # REDUCED: Gentler changes
         
-        # Enhanced priority parameter adjustment
-        self.alpha = min(1.0, self.alpha * (1.0 + 0.2 * self.plateau_episodes))
-        self.beta = max(0.3, self.beta * (0.9 - 0.1 * min(self.plateau_episodes, 3)))
-        
-        # Reward shaping intensity boost for harder scenarios
-        if hasattr(self.reward_shaper, 'plateau_boost'):
-            self.reward_shaper.plateau_boost = 1.0 + (0.3 * self.plateau_episodes)
-        
-        # Temperature scaling for more diverse action selection
+        # Gentle temperature scaling
         if not hasattr(self, 'action_temperature'):
             self.action_temperature = 1.0
-        self.action_temperature = min(2.0, 1.0 + (0.2 * self.plateau_episodes))
-        
+        self.action_temperature = min(2.0, 1.0 + (0.2 * self.plateau_episodes))  # REDUCED
+
         print(f"   📈 Plateau episode #{self.plateau_episodes}")
         print(f"   🎯 New epsilon: {self.epsilon:.1f}")
         print(f"   📚 New LR: {self.trainer.optimizer.param_groups[0]['lr']:.6f}")
