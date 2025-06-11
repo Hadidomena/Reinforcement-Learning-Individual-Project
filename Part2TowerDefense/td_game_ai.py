@@ -524,8 +524,8 @@ def train():
                             analyzer.save_model_analysis(agent.model)
                         except Exception as e:
                             print(f"Error analyzing model: {e}")
-                
-                # Enhanced logging with more metrics for better debugging
+                  # Enhanced logging with convergence detection status
+                convergence_status = "🚀BREAKTHROUGH" if agent.breakthrough_mode else "🎯NORMAL"
                 print(f'Game {agent.n_games:4d} | '
                       f'Score: {score:3d} | '
                       f'Level: {current_level:2d} | '
@@ -534,7 +534,18 @@ def train():
                       f'Recent Avg Score: {recent_avg_score:5.1f} | '
                       f'Recent Avg Level: {recent_avg_level:4.1f} | '
                       f'Epsilon: {agent.epsilon:4.1f} | '
-                      f'Loss: {long_memory_loss or 0:.4f}')
+                      f'Loss: {long_memory_loss or 0:.4f} | '
+                      f'Mode: {convergence_status}')
+                
+                # Show breakthrough countdown if active
+                if agent.breakthrough_mode:
+                    print(f'  🚀 Breakthrough countdown: {agent.breakthrough_countdown} games remaining')
+                
+                # Show performance variance warning if low
+                if len(recent_scores) >= 20:
+                    recent_variance = np.var(recent_scores[-20:])
+                    if recent_variance < 0.5:
+                        print(f'  ⚠️  Low variance detected: {recent_variance:.3f} (potential convergence risk)')
                 
                 # Show active perks if any
                 if hasattr(game, 'chosen_perks') and game.chosen_perks:

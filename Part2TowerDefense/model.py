@@ -77,7 +77,8 @@ class TowerDefenseTrainer:
             weight_decay=1e-5,  # Reduced weight decay
             eps=1e-8
         )
-          # Learning rate scheduler
+        
+        # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, 
             mode='min',
@@ -136,8 +137,8 @@ class TowerDefenseTrainer:
             # Return enhanced zero state as fallback - Updated size to match new state representation
             return torch.zeros(108, dtype=torch.float32)  # 8 + 60 + 40 = 108
         
-    def train_step(self, state, action, reward, next_state, done):
-        """Simplified training step"""
+    def train_step(self, state, action, reward, next_state, done, weights=None):
+        """Training step with support for importance sampling weights"""
         try:
             # Convert inputs to tensors
             if not isinstance(state, torch.Tensor):
@@ -149,6 +150,10 @@ class TowerDefenseTrainer:
             if not isinstance(reward, torch.Tensor):
                 reward = torch.tensor(reward, dtype=torch.float32)
             
+            # Handle importance sampling weights
+            if weights is not None and not isinstance(weights, torch.Tensor):
+                weights = torch.tensor(weights, dtype=torch.float32)
+            
             # Ensure batch dimension
             if len(state.shape) == 1:
                 state = state.unsqueeze(0)
@@ -156,6 +161,8 @@ class TowerDefenseTrainer:
                 action = action.unsqueeze(0)
                 reward = reward.unsqueeze(0)
                 done = [done] if not isinstance(done, list) else done
+                if weights is not None:
+                    weights = weights.unsqueeze(0)
             
             # Set model to training mode
             self.model.train()
@@ -179,8 +186,14 @@ class TowerDefenseTrainer:
                     else:
                         target_q_values[i][action_idx] = reward[i] + self.gamma * torch.max(next_q_values[i])
             
-            # Compute loss and update
+            # Compute loss with optional importance sampling weights
             loss = self.criterion(current_q_values, target_q_values)
+            
+            # Apply importance sampling weights if provided
+            if weights is not None:
+                # For element-wise weighting with SmoothL1Loss
+                element_wise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction='none')
+                loss = (element_wise_loss.mean(dim=1) * weights).mean()
             
             self.optimizer.zero_grad()
             loss.backward()
