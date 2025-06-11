@@ -7,12 +7,9 @@ SCREEN_HEIGHT = TILE_SIZE * ROWS
 FPS = 60
 HEALTH = 100
 MONEY = 650
-# No level cap - infinite rounds
 
-#enemy constants
 SPAWN_COOLDOWN = 400
 
-#turret constants
 TURRET_LEVELS = 4
 BUY_COST = 200
 UPGRADE_COST = 100

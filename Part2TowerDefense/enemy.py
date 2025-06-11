@@ -43,9 +43,7 @@ class Enemy(pg.sprite.Sprite):
       world.health -= 1
       world.missed_enemies += 1
 
-    #calculate distance to target
     dist = self.movement.length()
-    #check if remaining distance is greater than the enemy speed
     if dist >= (self.speed * world.game_speed):
       self.pos += self.movement.normalize() * (self.speed * world.game_speed)
     else:
@@ -54,11 +52,8 @@ class Enemy(pg.sprite.Sprite):
       self.target_waypoint += 1
 
   def rotate(self):
-    #calculate distance to next waypoint
     dist = self.target - self.pos
-    #use distance to calculate angle
     self.angle = math.degrees(math.atan2(-dist[1], dist[0]))
-    #rotate image and update rectangle
     self.image = pg.transform.rotate(self.original_image, self.angle)
     self.rect = self.image.get_rect()
     self.rect.center = self.pos
@@ -66,13 +61,12 @@ class Enemy(pg.sprite.Sprite):
   def check_alive(self, world):
     if self.health <= 0:
       world.killed_enemies += 1
-      # Reward based on enemy type
       reward_values = {
-          "weak": 1,   # Weakest enemy gives 1 coin
-          "medium": 2, # Medium enemy gives 2 coins
-          "strong": 3, # Strong enemy gives 3 coins
-          "elite": 4   # Elite enemy gives 4 coins
+          "weak": 1,
+          "medium": 2,
+          "strong": 3,
+          "elite": 4
       }
-      reward = reward_values.get(self.enemy_type, 1)  # Default to 1 if type not found
+      reward = reward_values.get(self.enemy_type, 1)
       world.money += reward
       self.kill()

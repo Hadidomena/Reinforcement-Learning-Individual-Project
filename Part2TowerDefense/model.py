@@ -19,8 +19,6 @@ class TowerDefenseQNet(nn.Module):
         
         # Dropout for regularization
         self.dropout = nn.Dropout(0.2)
-        
-        # Initialize weights properly
         self._init_weights()
     
     def _init_weights(self):
@@ -30,20 +28,15 @@ class TowerDefenseQNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
     
     def forward(self, x):
-        # Handle both single and batch inputs consistently
         original_shape = x.shape
         if len(x.shape) == 1:
             x = x.unsqueeze(0)
-        
-        # Forward pass - same for training and inference
         x = F.relu(self.ln1(self.linear1(x)))
         x = self.dropout(x) if self.training else x
         x = F.relu(self.ln2(self.linear2(x)))
         x = self.dropout(x) if self.training else x
         x = F.relu(self.ln3(self.linear3(x)))
         x = self.linear4(x)
-        
-        # Restore original shape
         if len(original_shape) == 1:
             x = x.squeeze(0)
             
@@ -134,8 +127,7 @@ class TowerDefenseTrainer:
             return torch.tensor(state, dtype=torch.float32)
         except Exception as e:
             print(f"Error in get_state: {e}")
-            # Return enhanced zero state as fallback - Updated size to match new state representation
-            return torch.zeros(108, dtype=torch.float32)  # 8 + 60 + 40 = 108
+            return torch.zeros(108, dtype=torch.float32) 
         
     def train_step(self, state, action, reward, next_state, done, weights=None):
         """Training step with support for importance sampling weights"""
@@ -169,8 +161,7 @@ class TowerDefenseTrainer:
             
             # Forward pass
             current_q_values = self.model(state)
-            
-            # Calculate target Q-values
+              # Calculate target Q-values
             with torch.no_grad():
                 next_q_values = self.target_model(next_state)
                 target_q_values = current_q_values.clone()
@@ -181,6 +172,14 @@ class TowerDefenseTrainer:
                     else:
                         action_idx = action[i].item() if isinstance(action[i], torch.Tensor) else action[i]
                     
+                    # Ensure action_idx is a valid integer
+                    if isinstance(action_idx, (np.ndarray, torch.Tensor)):
+                        action_idx = action_idx.item()
+                    action_idx = int(action_idx)
+                    
+                    # Ensure action_idx is within valid range
+                    action_idx = max(0, min(action_idx, target_q_values.shape[1] - 1))
+                    
                     if done[i]:
                         target_q_values[i][action_idx] = reward[i]
                     else:
@@ -189,9 +188,7 @@ class TowerDefenseTrainer:
             # Compute loss with optional importance sampling weights
             loss = self.criterion(current_q_values, target_q_values)
             
-            # Apply importance sampling weights if provided
             if weights is not None:
-                # For element-wise weighting with SmoothL1Loss
                 element_wise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction='none')
                 loss = (element_wise_loss.mean(dim=1) * weights).mean()
             

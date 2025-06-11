@@ -130,30 +130,24 @@ def get_dynamic_enemy_count(level):
     Dynamically generate enemy counts based on level number.
     For levels beyond the predefined ones, this will create progressively harder waves.
     """
-    # Use predefined data for first 15 levels
     if level <= 15:
         return ENEMY_SPAWN_DATA[level - 1]
     
-    # For levels beyond 15, generate increasing counts
-    base_count = level - 15  # Levels beyond 15 get progressively harder
+    base_count = level - 15
     
-    # Calculate enemy count by type with a formula that scales with level
-    weak_count = max(0, 20 + (base_count * 2) - (base_count // 3 * 10))  # Weak enemies increase then taper off
-    medium_count = max(0, 15 + (base_count * 3))  # Medium enemies increase steadily
-    strong_count = max(0, 10 + (base_count * 4))  # Strong enemies increase faster
-    elite_count = max(0, 5 + (base_count * 5))  # Elite enemies increase fastest
-    
-    # Ensure there's a minimum number of enemies in total
+    weak_count = max(0, 20 + (base_count * 2) - (base_count // 3 * 10))
+    medium_count = max(0, 15 + (base_count * 3))
+    strong_count = max(0, 10 + (base_count * 4))
+    elite_count = max(0, 5 + (base_count * 5))
     total = weak_count + medium_count + strong_count + elite_count
-    if total < level * 5:  # Minimum of 5 enemies per level number
-        # Add the difference to the strongest enemy type available
-        if level > 40:  # Very high levels focus on elites
+    if total < level * 5:
+        if level > 40:
             elite_count += (level * 5) - total
-        elif level > 30:  # High levels focus on strong enemies
+        elif level > 30:
             strong_count += (level * 5) - total
-        elif level > 20:  # Medium levels focus on medium enemies
+        elif level > 20:
             medium_count += (level * 5) - total
-        else:  # Lower levels add more weak enemies
+        else:
             weak_count += (level * 5) - total
     
     return {

@@ -7,79 +7,33 @@ from button import Button
 import constants as c
 import os
 from perks import initialize_perks, get_random_perks
+from asset_loader import load_turret_assets, load_enemy_images, load_ui_images
 
-# Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-#initialise pygame
 pg.init()
-
-#create clock
 clock = pg.time.Clock()
-
-#create game window
 screen = pg.display.set_mode((c.SCREEN_WIDTH + c.SIDE_PANEL, c.SCREEN_HEIGHT))
 pg.display.set_caption("Tower Defence")
 
-#game variables
 game_over = False
-game_outcome = 0# -1 is loss & 1 is win
+game_outcome = 0
 level_started = False
 last_enemy_spawn = pg.time.get_ticks()
 placing_turrets = False
 selected_turret = None
-selected_turret_type = 0  # Default to first turret type
+selected_turret_type = 0
 
-# Perk system variables
 perks_dict = initialize_perks(SCRIPT_DIR)
 perk_selection_active = False
-perk_options = []  # Will hold current perk choices
-perks_enabled_at_level = 3  # Start offering perks at level 3
-perk_frequency = 3  # Offer perks every 3 levels
+perk_options = []
+perks_enabled_at_level = 3
+perk_frequency = 3
 
-#load images
-#map
 map_image = pg.image.load(os.path.join(SCRIPT_DIR, 'levels/level.png')).convert_alpha()
-
-# Dynamically load turret types from turrets directory
-TURRETS_DIR = os.path.join(SCRIPT_DIR, 'assets/images/turrets')
-turret_type_dirs = [d for d in os.listdir(TURRETS_DIR) if os.path.isdir(os.path.join(TURRETS_DIR, d))]
-turret_types = []
-turret_spritesheets_dict = {}
-cursor_turrets = {}
-for turret_dir in turret_type_dirs:
-    turret_type = turret_dir.replace('turret', '').lower() if turret_dir.lower().startswith('turret') else turret_dir.lower()
-    if not turret_type:
-        turret_type = 'basic'
-    turret_types.append(turret_type)
-    # Load spritesheets
-    spritesheets = []
-    for x in range(1, c.TURRET_LEVELS + 1):
-        sheet_path = os.path.join(TURRETS_DIR, turret_dir, f'turret_{x}.png')
-        spritesheets.append(pg.image.load(sheet_path).convert_alpha())
-    turret_spritesheets_dict[turret_type] = spritesheets
-    # Load cursor image
-    cursor_path = os.path.join(TURRETS_DIR, turret_dir, 'cursor_turret.png')
-    cursor_turrets[turret_type] = pg.image.load(cursor_path).convert_alpha()
-
-#enemies
-enemy_images = {
-    "weak": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_1.png')).convert_alpha(),
-    "medium": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_2.png')).convert_alpha(), 
-    "strong": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_3.png')).convert_alpha(),
-    "elite": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_4.png')).convert_alpha()
-}
-#buttons
-buy_turret_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/buy_turret.png')).convert_alpha()
-cancel_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/cancel.png')).convert_alpha()
-upgrade_turret_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/upgrade_turret.png')).convert_alpha()
-begin_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/begin.png')).convert_alpha()
-restart_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/restart.png')).convert_alpha()
-fast_forward_image = pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/buttons/fast_forward.png')).convert_alpha()
-#gui
-heart_image = pg.image.load(os.path.join(SCRIPT_DIR, "assets/images/gui/heart.png")).convert_alpha()
-coin_image = pg.image.load(os.path.join(SCRIPT_DIR, "assets/images/gui/coin.png")).convert_alpha()
-logo_image = pg.image.load(os.path.join(SCRIPT_DIR, "assets/images/gui/logo.png")).convert_alpha()
+turret_types, turret_spritesheets_dict, cursor_turrets = load_turret_assets(SCRIPT_DIR)
+enemy_images = load_enemy_images(SCRIPT_DIR)
+ui_images = load_ui_images(SCRIPT_DIR)
 
 #load sounds
 shot_fx = pg.mixer.Sound(os.path.join(SCRIPT_DIR, 'assets/audio/shot.wav'))
@@ -106,9 +60,9 @@ def display_data():
   draw_text("LEVEL: " + str(world.level), text_font, "grey100", c.SCREEN_WIDTH + 10, 10)
   # Show number of enemies in this level
   draw_text("Enemies: " + str(len(world.enemy_list)), text_font, "grey100", c.SCREEN_WIDTH + 150, 10)
-  screen.blit(heart_image, (c.SCREEN_WIDTH + 10, 35))
+  screen.blit(ui_images['heart'], (c.SCREEN_WIDTH + 10, 35))
   draw_text(str(world.health), text_font, "grey100", c.SCREEN_WIDTH + 50, 40)
-  screen.blit(coin_image, (c.SCREEN_WIDTH + 10, 65))
+  screen.blit(ui_images['coin'], (c.SCREEN_WIDTH + 10, 65))
   draw_text(str(world.money), text_font, "grey100", c.SCREEN_WIDTH + 50, 70)
   
   # Show perk information
@@ -258,13 +212,11 @@ world.process_enemies()
 enemy_group = pg.sprite.Group()
 turret_group = pg.sprite.Group()
 
-#create buttons
-upgrade_button = Button(c.SCREEN_WIDTH + 30, 145, upgrade_turret_image, True)
-# Position cancel and begin buttons at the bottom of the screen
-cancel_button = Button(c.SCREEN_WIDTH, c.SCREEN_HEIGHT - 60, cancel_image, True)
-begin_button = Button(c.SCREEN_WIDTH + 110, c.SCREEN_HEIGHT - 60, begin_image, True)
-restart_button = Button(310, 300, restart_image, True)
-fast_forward_button = Button(c.SCREEN_WIDTH + 110, c.SCREEN_HEIGHT - 60, fast_forward_image, False)
+upgrade_button = Button(c.SCREEN_WIDTH + 30, 145, ui_images['upgrade_turret'], True)
+cancel_button = Button(c.SCREEN_WIDTH, c.SCREEN_HEIGHT - 60, ui_images['cancel'], True)
+begin_button = Button(c.SCREEN_WIDTH + 110, c.SCREEN_HEIGHT - 60, ui_images['begin'], True)
+restart_button = Button(310, 300, ui_images['restart'], True)
+fast_forward_button = Button(c.SCREEN_WIDTH + 110, c.SCREEN_HEIGHT - 60, ui_images['fast_forward'], False)
 
 # Create turret type buttons - positioned better with dynamic spacing
 turret_type_buttons = []
@@ -365,14 +317,11 @@ while run:
     
     # Draw turret type buttons with labels and costs
     for i, (btn, t_type) in enumerate(turret_type_buttons):
-        # Show cost of turret to the left of the turret icon - display coin first then text
-        screen.blit(coin_image, (c.SCREEN_WIDTH + 10, 185 + (i * 80)))
+        screen.blit(ui_images['coin'], (c.SCREEN_WIDTH + 10, 185 + (i * 80)))
         draw_text(str(c.BUY_COST), text_font, "grey100", c.SCREEN_WIDTH + 45, 185 + (i * 80))
-        # Draw button and handle click
         if btn.draw(screen):
             selected_turret_type = turret_types.index(t_type)
             placing_turrets = True
-        # Draw label directly to the right of the button
         draw_text(t_type.capitalize(), text_font, "grey100", c.SCREEN_WIDTH + 160, 185 + (i * 80))
     
     # Show the currently selected type below the perk information
@@ -390,11 +339,8 @@ while run:
     
     # Show upgrade button if a turret is selected        
     if selected_turret:
-      #if a turret can be upgraded then show the upgrade button
       if selected_turret.upgrade_level < c.TURRET_LEVELS:
-        #show cost of upgrade and draw the button - coin first then text
-        screen.blit(coin_image, (c.SCREEN_WIDTH + 95, 145))
-        # Display upgrade text
+        screen.blit(ui_images['coin'], (c.SCREEN_WIDTH + 95, 145))
         if upgrade_button.draw(screen):
           if world.money >= c.UPGRADE_COST:
             selected_turret.upgrade()

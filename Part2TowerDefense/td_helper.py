@@ -14,7 +14,6 @@ ax1 = None
 ax2 = None
 
 def plot(scores, mean_scores, rewards):
-    """Enhanced plotting function with error handling for large datasets"""
     global fig, ax1, ax2
     
     try:
@@ -24,12 +23,10 @@ def plot(scores, mean_scores, rewards):
             ax1.clear()
             ax2.clear()
 
-        # Ensure inputs are lists or can be converted to lists
         scores = list(scores) if scores else []
         mean_scores = list(mean_scores) if mean_scores else []
         rewards = list(rewards) if rewards else []
 
-        # Plot scores
         ax1.set_title('Training Scores')
         ax1.set_xlabel('Number of Games')
         ax1.set_ylabel('Score')
@@ -39,16 +36,13 @@ def plot(scores, mean_scores, rewards):
         if mean_scores:
             ax1.plot(mean_scores, 'r-', label='Mean Score')
         
-        # Add moving average for scores
         if len(scores) >= 5:
             window_size = min(5, len(scores))
             try:
                 moving_avg = np.convolve(scores, np.ones(window_size)/window_size, mode='valid')
-                # Ensure we create proper range indices for plotting
                 start_idx = window_size - 1
                 end_idx = len(scores)
                 indices = list(range(start_idx, end_idx))
-                # Ensure arrays have same length
                 if len(moving_avg) == len(indices):
                     ax1.plot(indices, moving_avg, 'g--', label=f'{window_size}-game Moving Avg')
             except Exception as e:
@@ -57,36 +51,29 @@ def plot(scores, mean_scores, rewards):
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc='upper left')
 
-        # Plot rewards - ensure non-zero Y-axis range
         ax2.set_title('Rewards per Game')
         ax2.set_xlabel('Number of Games')
         ax2.set_ylabel('Reward')
         
         if rewards:
-            # Calculate a reasonable y-axis range for rewards
             min_reward = min(rewards)
             max_reward = max(rewards)
-            if max_reward - min_reward < 1:  # Avoid flat line by setting a minimum range
+            if max_reward - min_reward < 1:
                 max_reward = min_reward + 1 if min_reward < 0 else 1
             
-            # Add a small buffer to the range
             y_range = max_reward - min_reward
-            buffer = max(y_range * 0.1, 1)  # 10% buffer or minimum 1
+            buffer = max(y_range * 0.1, 1)
             
-            # Apply adjusted range with minimum span
             ax2.set_ylim([min_reward - buffer, max_reward + buffer])
             ax2.plot(rewards, 'g-', label='Reward')
             
-            # Add moving average for rewards if we have enough data
             if len(rewards) >= 10:
                 window_size = min(10, len(rewards))
                 try:
                     moving_avg = np.convolve(rewards, np.ones(window_size)/window_size, mode='valid')
-                    # Ensure we create proper range indices for plotting
                     start_idx = window_size - 1
                     end_idx = len(rewards)
                     indices = list(range(start_idx, end_idx))
-                    # Ensure arrays have same length
                     if len(moving_avg) == len(indices):
                         ax2.plot(indices, moving_avg, 'r--', label=f'{window_size}-game Moving Avg')
                 except Exception as e:
@@ -106,10 +93,7 @@ def plot(scores, mean_scores, rewards):
         print("Continuing training without plots...")
 
 class TrainingAnalyzer:
-    """Utility class for analyzing training performance"""
-    
     def __init__(self, agent, log_dir='training_logs'):
-        """Initialize analyzer with the agent to monitor"""
         self.agent = agent
         self.log_dir = log_dir
         self.start_time = time.time()
@@ -118,25 +102,21 @@ class TrainingAnalyzer:
         self.level_history = []
         self.action_frequencies = []
         
-        # Create log directory if it doesn't exist
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
     
     def log_game_stats(self, game_num, score, level, reward, epsilon):
-        """Log statistics after each game"""
         game_time = time.time() - self.start_time
         self.game_times.append(game_time)
         self.rewards_history.append(reward)
         self.level_history.append(level)
         
-        # Log action distribution
         if hasattr(self.agent, 'action_distribution'):
             action_dist = self.agent.action_distribution.copy()
             total_actions = action_dist.sum() if action_dist.sum() > 0 else 1
             normalized_dist = action_dist / total_actions
             self.action_frequencies.append(normalized_dist)
         
-        # Save detailed game log
         log_file = os.path.join(self.log_dir, f'game_stats.csv')
         file_exists = os.path.isfile(log_file)
         
@@ -145,7 +125,6 @@ class TrainingAnalyzer:
                 f.write('game,time,score,level,reward,epsilon\n')
             f.write(f'{game_num},{game_time:.2f},{score},{level},{reward:.2f},{epsilon:.2f}\n')
         
-        # Every 10 games, perform more detailed analysis
         if game_num % 10 == 0:
             self.analyze_training_trends()
     

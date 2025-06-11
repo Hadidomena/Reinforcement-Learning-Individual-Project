@@ -4,64 +4,33 @@ from world import World
 from enemy import Enemy
 from turret import Turret, TurretSlow, TurretPowerful
 import constants as c
-from td_agent import TowerDefenseAgent
 from td_helper import plot
+from td_agent import TowerDefenseAgent
 import os
 import numpy as np
 import random
 import torch
 from perks import initialize_perks, get_random_perks
+from asset_loader import load_turret_assets, load_enemy_images
 
-# Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Initialize pygame first
 pg.init()
-
-# Set display mode BEFORE loading images with convert_alpha
 screen = pg.display.set_mode((c.SCREEN_WIDTH + c.SIDE_PANEL, c.SCREEN_HEIGHT))
 pg.display.set_caption("Tower Defence AI Training")
 
-# Now load assets
 map_image = pg.image.load(os.path.join(SCRIPT_DIR, 'levels/level.png')).convert_alpha()
-
-# Dynamically load turret types from turrets directory
-TURRETS_DIR = os.path.join(SCRIPT_DIR, 'assets/images/turrets')
-turret_type_dirs = [d for d in os.listdir(TURRETS_DIR) if os.path.isdir(os.path.join(TURRETS_DIR, d))]
-turret_types = []
-turret_spritesheets_dict = {}
-cursor_turrets = {}
-for turret_dir in turret_type_dirs:
-    turret_type = turret_dir.replace('turret', '').lower() if turret_dir.lower().startswith('turret') else turret_dir.lower()
-    if not turret_type:
-        turret_type = 'basic'
-    turret_types.append(turret_type)
-    # Load spritesheets
-    spritesheets = []
-    for x in range(1, c.TURRET_LEVELS + 1):
-        sheet_path = os.path.join(TURRETS_DIR, turret_dir, f'turret_{x}.png')
-        spritesheets.append(pg.image.load(sheet_path).convert_alpha())
-    turret_spritesheets_dict[turret_type] = spritesheets
-    # Load cursor image
-    cursor_path = os.path.join(TURRETS_DIR, turret_dir, 'cursor_turret.png')
-    cursor_turrets[turret_type] = pg.image.load(cursor_path).convert_alpha()
-
-enemy_images = {
-    "weak": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_1.png')).convert_alpha(),
-    "medium": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_2.png')).convert_alpha(),
-    "strong": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_3.png')).convert_alpha(),
-    "elite": pg.image.load(os.path.join(SCRIPT_DIR, 'assets/images/enemies/enemy_4.png')).convert_alpha()
-}
+turret_types, turret_spritesheets_dict, cursor_turrets = load_turret_assets(SCRIPT_DIR)
+enemy_images = load_enemy_images(SCRIPT_DIR)
 
 shot_fx = pg.mixer.Sound(os.path.join(SCRIPT_DIR, 'assets/audio/shot.wav'))
-shot_fx.set_volume(0.1)  # Lower volume for training
+shot_fx.set_volume(0.1)
 
 with open(os.path.join(SCRIPT_DIR, 'levels/level.tmj')) as file:
     world_data = json.load(file)
 
-# Load perk images
-perks_enabled_at_level = 3  # Start offering perks at level 3
-perk_frequency = 3  # Offer perks every 3 levels
+perks_enabled_at_level = 3
+perk_frequency = 3
 
 class TowerDefenseAI:
     def __init__(self):
@@ -100,12 +69,11 @@ class TowerDefenseAI:
         
         # Critical: Force AI mode
         self.level_started = True
-        self.world.level_started = True  # If this exists in World class
+        self.world.level_started = True
         self.world.game_speed = self.game_speed
         self.last_enemy_spawn = pg.time.get_ticks()
         self.world.level = 1
         
-        # Initialize tracking variables
         self.enemies_spawned = 0
         self.enemies_killed = 0
         self.initial_turret_count = 0
@@ -113,8 +81,7 @@ class TowerDefenseAI:
         self.perk_selection_active = False
         self.perk_options = []
         
-        # Start spawning immediately by setting time values
-        pg.time.delay(10)  # Small delay to ensure time differences
+        pg.time.delay(10)
         
         valid_pos = self.get_valid_positions()
         print(f"Reset complete. Valid positions: {len(valid_pos)}")
@@ -125,14 +92,11 @@ class TowerDefenseAI:
         if not self.perk_options:
             return
             
-        # Select a random perk
         perk = random.choice(self.perk_options)
         
-        # Apply the perk effect
         perk.apply_effect(self.world, self.turret_group)
         self.chosen_perks.append(perk.name)
         
-        # End perk selection
         self.perk_selection_active = False
         
         return perk.name
@@ -160,21 +124,17 @@ class TowerDefenseAI:
         initial_health = self.world.health
         initial_money = self.world.money
         
-        # Track enemies that reached the end this step
         if not hasattr(self.world, 'enemies_reached_end'):
             self.world.enemies_reached_end = 0
 
-        # Handle only quit event
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 pg.quit()
                 quit()
         
-        # Handle perk selection if active
         if self.perk_selection_active:
             chosen_perk = self.choose_random_perk()
             print(f"AI selected perk: {chosen_perk}")
-            # More moderate reward for getting a perk
             reward += 2.5
                 
         # Process action with improved rewards
@@ -192,7 +152,7 @@ class TowerDefenseAI:
                 
                 # Randomly choose between turret types
                 rand_val = random.random()
-                if rand_val < 0.33:  # ~33% chance for each type
+                if rand_val < 0.33:
                     turret_type = 'basic'
                     new_turret = Turret(self.turret_spritesheets_dict[turret_type], x, y, self.shot_fx)
                 elif rand_val < 0.67:
@@ -205,17 +165,13 @@ class TowerDefenseAI:
                 self.turret_group.add(new_turret)
                 self.world.money -= c.BUY_COST
                 
-                # Improved reward calculation with more moderate values
-                base_reward = 2.0  # Reduced from 5.0
-                position_bonus = position_quality * 1.5  # Reduced from 3.0
-                timing_bonus = self._calculate_timing_bonus() * 0.5  # Scaled down
+                base_reward = 2.0 
+                position_bonus = position_quality * 1.5
+                timing_bonus = self._calculate_timing_bonus() * 0.5
                 placement_reward = base_reward + position_bonus + timing_bonus
                 reward += placement_reward
-                action_successful = True
-                
             else:
-                # Smaller penalty for invalid actions
-                reward -= 0.5  # Reduced from 1.0
+                reward -= 0.5
 
         elif action_idx < c.COLS * c.ROWS + len(self.turret_group):  # Upgrade turret
             turret_idx = action_idx - (c.COLS * c.ROWS)
@@ -227,20 +183,17 @@ class TowerDefenseAI:
                     turret.upgrade_level < c.TURRET_LEVELS):
                     turret.upgrade()
                     self.world.money -= c.UPGRADE_COST
-                    # More moderate progressive reward for upgrades
-                    upgrade_reward = 1.5 + (turret.upgrade_level * 1.0)  # Reduced from 3.0 + level*2.0
+                    upgrade_reward = 1.5 + (turret.upgrade_level * 1.0) 
                     reward += upgrade_reward
                     action_successful = True
                 else:
-                    # Small penalty for invalid upgrade
-                    reward -= 0.25  # Reduced from 0.5
+                    reward -= 0.25 
 
         # Reset enemies reached end counter for this step
         self.world.enemies_reached_end = 0
 
         # Update game state multiple times for increased speed
         for _ in range(self.game_speed):
-            # Store health before update to track lost health
             pre_update_health = self.world.health
             
             self.enemy_group.update(self.world)
@@ -264,21 +217,17 @@ class TowerDefenseAI:
         # Calculate enemies killed (main objective)
         enemies_killed_this_step = enemy_initial_count + self.world.enemies_reached_end - len(self.enemy_group)
         if enemies_killed_this_step > 0:
-            # More moderate reward for killing enemies
-            kill_reward = enemies_killed_this_step * 4.0  # Reduced from 8.0
+            kill_reward = enemies_killed_this_step * 4.0 
             reward += kill_reward
             self.enemies_killed += enemies_killed_this_step
 
-        # Penalty for letting enemies through with slightly lower penalties
         health_lost = initial_health - self.world.health
         if health_lost > 0:
-            # Less severe penalty based on remaining health
-            health_penalty = health_lost * (1.0 + (100 - self.world.health) * 0.03)  # Reduced from 2.0 + 0.05
-            reward -= health_penalty        # Survival bonus - bardziej stała nagroda za przetrwanie
+            health_penalty = health_lost * (1.0 + (100 - self.world.health) * 0.03)
+            reward -= health_penalty
         if self.world.health > 0:
-            # Stała podstawa + mniejszy wpływ zdrowia dla większej stabilności
-            base_survival = 0.1  # Stała nagroda za samo przetrwanie 
-            health_bonus = 0.05 * (self.world.health / 100.0)  # Mniejszy wpływ aktualnego zdrowia
+            base_survival = 0.1
+            health_bonus = 0.05 * (self.world.health / 100.0)
             survival_bonus = base_survival + health_bonus
             reward += survival_bonus
 
@@ -286,19 +235,18 @@ class TowerDefenseAI:
         if self.enemies_spawned > 0:
             kill_ratio = self.enemies_killed / self.enemies_spawned
             if kill_ratio > 0.8:  # High efficiency
-                reward += 1.0 * kill_ratio  # Reduced from 2.0        # Check level completion
+                reward += 1.0 * kill_ratio
+
         if self.world.check_level_complete():
             self.world.money += c.LEVEL_COMPLETE_REWARD
-            # Liniowy system nagród - stała nagroda plus niewielki mnożnik za poziom
-            base_reward = 30.0  # Stała podstawowa nagroda
-            level_multiplier = 2.0  # Niewielki mnożnik za poziom
-            reward += base_reward + min(15, self.world.level) * level_multiplier  # Ograniczenie wpływu poziomów
+            base_reward = 30.0
+            level_multiplier = 2.0 
+            reward += base_reward + min(15, self.world.level) * level_multiplier 
             self.world.level += 1
             
-            # Check if we should offer perks at this level
             if self.world.level >= perks_enabled_at_level and self.world.level % perk_frequency == 0:
                 self.perk_options = get_random_perks(self.perks_dict, 3)
-                if self.perk_options:  # Make sure we have perks to show
+                if self.perk_options:
                     self.perk_selection_active = True
                     print(f"Perk selection active - level {self.world.level}")
             
@@ -306,21 +254,15 @@ class TowerDefenseAI:
             self.world.process_enemies()
             self.last_enemy_spawn = pg.time.get_ticks()
             
-        # Check game over conditions
         if self.world.health <= 0:
             game_over = True
-            # More moderate penalty based on performance
-            death_penalty = -25.0  # Reduced from -50.0
-            # Less penalty if made some progress
-            progress_bonus = min(10.0, self.world.level * 1.5 + self.enemies_killed * 0.25)  # Reduced from 20.0, 2.0, 0.5
+            death_penalty = -25.0
+            progress_bonus = min(10.0, self.world.level * 1.5 + self.enemies_killed * 0.25)
             reward = death_penalty + progress_bonus
             
         elif self.frame_iteration > 2000:  # Increased timeout
             game_over = True
-            # More moderate reward based on survival and progress
-            reward += self.world.level * 3.0 + self.enemies_killed * 0.1  # Reduced from 5.0, 0.2
-              # Remove aggressive reward scaling and clipping to preserve learning signal
-        # reward = reward * 0.5  # REMOVED - was limiting learning
+            reward += self.world.level * 3.0 + self.enemies_killed * 0.1
             
         # Track rewards for the current game only
         self.game_reward += reward
@@ -330,8 +272,7 @@ class TowerDefenseAI:
             self.update_ui()
             self.clock.tick(c.FPS * self.game_speed)
 
-        # More reasonable reward clipping to prevent extreme values only
-        reward = max(-200, min(200, reward))  # Increased range from [-50, 50] to [-200, 200]
+        reward = max(-200, min(200, reward))
         
         return reward, game_over, self.world.level
 
@@ -345,20 +286,18 @@ class TowerDefenseAI:
     def _evaluate_turret_position(self, x, y):
         """Calculate strategic value of a turret position based on proximity to path"""
         if not hasattr(self.world, 'waypoints') or not self.world.waypoints:
-            return 0.5  # Default medium value if no waypoints
+            return 0.5 
             
-        # Calculate minimum distance to any waypoint
         min_distance = float('inf')
         for waypoint in self.world.waypoints:
-            # Convert tile coordinates to pixel coordinates for distance calculation
             turret_x = x * c.TILE_SIZE + c.TILE_SIZE // 2
             turret_y = y * c.TILE_SIZE + c.TILE_SIZE // 2
             dist = ((turret_x - waypoint[0]) ** 2 + (turret_y - waypoint[1]) ** 2) ** 0.5
             min_distance = min(min_distance, dist)
         
-        # Normalize distance: closer is better, but not too close
+        # Normalize distance: closer is better
         # Ideal distance is around 1-2 tiles away from path
-        ideal_dist = c.TILE_SIZE * 1.5
+        ideal_dist = c.TILE_SIZE
         position_score = 0
         
         if min_distance < c.TILE_SIZE * 0.5:  # Too close to path
@@ -392,14 +331,11 @@ def train():
     agent = TowerDefenseAgent()
     game = TowerDefenseAI()
     
-    # Initialize with more exploration focus to discover better policies
-    agent.epsilon = 95  # Higher initial exploration rate
-    
-    # Add performance tracking with longer window for better stability
+    agent.epsilon = 95     
     recent_scores = []
     recent_rewards = []
     recent_levels = []
-    performance_window = 20  # Track last 20 games (increased from 10)
+    performance_window = 20  # Track last 20 games
     
     # Initialize training analyzer
     try:
@@ -494,8 +430,7 @@ def train():
                 recent_avg_level = sum(recent_levels) / len(recent_levels) if recent_levels else 0
                 
                 # Adaptive epsilon adjustment based on performance trends
-                if agent.n_games % 5 == 0 and agent.n_games > 20:  # Wait for enough data
-                    # Dynamic adjustment based on recent performance relative to best
+                if agent.n_games % 5 == 0 and agent.n_games > 20: 
                     if record > 0:
                         performance_ratio = recent_avg_score / record
                         
