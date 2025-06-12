@@ -9,89 +9,31 @@ import os
 import math
 import torch.nn.functional as F
 
-MAX_MEMORY = 150_000
-BATCH_SIZE = 64
-LR = 0.000025
-PRIORITIZED_REPLAY = True
-NOISY_NETWORKS = False
-
-CONVERGENCE_WINDOW = 50
-CONVERGENCE_THRESHOLD = 0.5
-BREAKTHROUGH_EPSILON = 15.0
-STABILITY_LOSS_THRESHOLD = 0.01
-
-class ConvergenceDetector:
-    def __init__(self, window_size=50, convergence_threshold=0.5):
-        self.window_size = window_size
-        self.convergence_threshold = convergence_threshold
-        self.score_history = deque(maxlen=window_size)
-        self.q_value_history = deque(maxlen=window_size)
-        self.action_entropy_history = deque(maxlen=window_size)
-        self.loss_history = deque(maxlen=window_size)
-        
-    def update(self, score, avg_q_value, action_entropy, loss):
-        self.score_history.append(score)
-        self.q_value_history.append(avg_q_value)
-        self.action_entropy_history.append(action_entropy)
-        self.loss_history.append(loss)
-        
-    def detect_convergence(self):
-        if len(self.score_history) < self.window_size:
-            return False
-            
-        score_std = np.std(self.score_history)
-        q_value_std = np.std(self.q_value_history) if self.q_value_history else float('inf')
-        action_entropy_avg = np.mean(self.action_entropy_history) if self.action_entropy_history else 1.0
-        
-        convergence_detected = (
-            score_std < self.convergence_threshold and
-            q_value_std < 2.0 and
-            action_entropy_avg < 0.5        )
-        
-        return convergence_detected
-        
-    def get_stagnation_level(self):
-        if len(self.score_history) < 20:
-            return 0.0
-            
-        recent_std = np.std(list(self.score_history)[-20:])
-        older_std = np.std(list(self.score_history)[-40:-20]) if len(self.score_history) >= 40 else recent_std
-        
-        if older_std == 0:
-            return 1.0 if recent_std < 0.1 else 0.0
-            
-        variance_reduction = 1.0 - (recent_std / (older_std + 1e-6))
-        return max(0.0, min(1.0, variance_reduction))
+# STABILITY FIX: Optimized hyperparameters for stable learning
+MAX_MEMORY = 100_000   # INCREASED: Larger memory for better stability
+BATCH_SIZE = 128       # INCREASED: Larger batches for more stable updates  
+LR = 0.00005           # FURTHER REDUCED: Very low learning rate for fine-tuning
+PRIORITIZED_REPLAY = True  # Keep using prioritized experience replay
+NOISY_NETWORKS = False  # DISABLED: Reduce noise for more stable learning
 
 class TowerDefenseAgent:    
     def __init__(self):
-        self.n_games = 0        
-        
-        self.epsilon = 2.0
-        self.epsilon_min = 0.02
-        self.epsilon_decay = 0.99995
-        self.epsilon_cycle_length = 500
-        self.base_epsilon = 0.2
-        self.gamma = 0.995
-        
-        self.convergence_detector = ConvergenceDetector()
-        self.breakthrough_mode = False
-        self.breakthrough_countdown = 0
-        self.stability_violations = 0
-        self.last_breakthrough_game = 0
-        
-        self.performance_buffer = deque(maxlen=CONVERGENCE_WINDOW)
-        self.loss_stability_buffer = deque(maxlen=30)
-        self.q_value_tracking = deque(maxlen=100)
+        self.n_games = 0
+        # STABILITY FIX: Conservative exploration strategy  
+        self.epsilon = 5   # REDUCED: Much lower starting epsilon
+        self.epsilon_min = 0.1  # REDUCED: Very low minimum for exploitation
+        self.epsilon_decay = 0.9998  # SLOWER: Very gradual decay
+        self.epsilon_cycle_length = 200  # Longer cycles for stability
+        self.base_epsilon = 0.5  # REDUCED: Lower base for resets
+        self.gamma = 0.99  # Standard discount factor
         
         self.best_recent_score = 0
         self.performance_window = 100
         self.stable_performance_threshold = 0.85
         
         self.difficulty_level = 1
-        self.games_per_difficulty = 50
-        self.performance_threshold = 10
-        
+        self.games_per_difficulty = 50  # INCREASED: More games per difficulty
+        self.performance_threshold = 10  # INCREASED: Higher threshold        # Experience replay with conservative priorities
         self.memory = deque(maxlen=MAX_MEMORY)
         self.priorities = deque(maxlen=MAX_MEMORY)
         self.elite_memory = deque(maxlen=20000)
@@ -108,24 +50,19 @@ class TowerDefenseAgent:
         
         self.model = TowerDefenseQNet(self.state_size, 512, self.action_size)
         self.trainer = TowerDefenseTrainer(self.model, lr=LR, gamma=self.gamma)
-        
-        self.target_update_frequency = 200
-        self.multi_step_n = 1
-        self.double_dqn = True
+          # Multi-step learning and double DQN - more stable
+        self.target_update_frequency = 100  # INCREASED: Less frequent updates for stability
+        self.multi_step_n = 2  # REDUCED: Simpler learning
+        self.double_dqn = True  # Use Double DQN for reduced overestimation
         self.steps_done = 0
-        
-        self.performance_memory = deque(maxlen=200)
-        self.stable_score_threshold = 10
-        self.regression_detection_window = 30
-        self.knowledge_preservation_rate = 0.95
-        
+          # Tracking metrics for introspection
         self.total_reward = 0
         self.reward_history = []
         self.action_distribution = np.zeros(self.action_size)
         self.running_loss = 0
-        self.ema_loss = None
-        self.turret_group = []
-        
+        self.ema_loss = None  # Exponential moving average loss
+        self.turret_group = []  # Will be updated during gameplay
+          # Performance tracking for curriculum learning
         self.recent_scores = []
         self.plateau_counter = 0
         self.last_improvement = 0
@@ -133,10 +70,10 @@ class TowerDefenseAgent:
         self.lr_decay_patience = 50
         self.lr_decay_factor = 0.7
         self.min_lr = 1e-6
-        
+          # Advanced reward shaping
         self.reward_shaper = AdvancedRewardShaper()
         self.action_history = deque(maxlen=100)
-        
+          # Anti-catastrophic forgetting mechanisms
         self.knowledge_consolidation = True
         self.stable_policy_buffer = deque(maxlen=1000)
         self.performance_regression_counter = 0
@@ -153,12 +90,15 @@ class TowerDefenseAgent:
         
         self.exploration_momentum = 0.0
         self.strategy_adaptation_rate = 0.1
-        self.debug_counter = 0
+        
+        # Breakthrough mode tracking
+        self.breakthrough_mode = False
+        self.games_since_breakthrough = 0
 
     def get_state(self, world, enemy_group, turret_group):
         self.turret_group = turret_group
         state = self.trainer.get_state(world, enemy_group, turret_group)
-        
+          # Debug info periodically
         if hasattr(self, 'n_games') and self.n_games % 10 == 0 and hasattr(self, 'debug_counter') and self.debug_counter % 50 == 0:
             print(f"State shape: {state.shape}, Range: [{state.min().item():.2f}, {state.max().item():.2f}]")
             
@@ -185,19 +125,8 @@ class TowerDefenseAgent:
                 print(f"Warning: Extreme values in state: {np.max(np.abs(state)):.1f}. Clipping.")
                 state = np.clip(state, -100, 100)
                 next_state = np.clip(next_state, -100, 100)
-
-            if isinstance(action, np.ndarray) and action.size > 1:
-                action_idx = np.argmax(action)
-            elif isinstance(action, np.ndarray):
-                action_idx = action.item()
-            else:
-                action_idx = action
-                
-            # Ensure action_idx is a proper integer
-            if isinstance(action_idx, (np.ndarray, torch.Tensor)):
-                action_idx = action_idx.item()
-            action_idx = int(action_idx)
             
+            # Enhanced reward shaping
             if game_stats:
                 action_type = "upgrade" if np.argmax(action) >= c.ROWS * c.COLS else "place"
                 shaped_reward = self.reward_shaper.calculate_reward(state, action_type, game_stats)
@@ -219,27 +148,35 @@ class TowerDefenseAgent:
                 
                 current_q = self.model(s)
                 
+                # Get action index
+                action_idx = np.argmax(action) if len(action.shape) > 0 else action
+                
+                # Calculate target Q value
                 if done:
                     target_q = total_reward
                 else:
                     next_q = self.trainer.target_model(ns)
                     target_q = total_reward + self.gamma * torch.max(next_q).item()
                 
+                # Calculate TD error (priority)
                 if isinstance(action_idx, np.ndarray):
                     action_idx = action_idx.item()
                 td_error = abs(target_q - current_q[0, action_idx].item())
-
+            
+            # Add small constant to prevent zero priority
             priority = (td_error + 0.1) ** self.alpha
-                
-            self.memory.append((state, action_idx, total_reward, next_state, done))
+              # Store experience with enhanced reward
+            self.memory.append((state, action, total_reward, next_state, done))
             self.priorities.append(priority)
             
             if game_stats and game_stats.get('level', 0) >= self.elite_threshold:
-                elite_priority = priority * 2.0
-                self.elite_memory.append((state, action_idx, total_reward, next_state, done, elite_priority))
-                if len(self.elite_memory) > 8000:
+                elite_priority = priority * 2.0  # Higher priority for elite experiences
+                self.elite_memory.append((state, action, total_reward, next_state, done, elite_priority))
+                if len(self.elite_memory) > 8000:  # Keep only recent elite experiences
                     self.elite_memory.popleft()
             
+            # Track action distribution and history
+            action_idx = np.argmax(action) if isinstance(action, np.ndarray) and action.size > 1 else action
             if isinstance(action_idx, np.ndarray):
                 action_idx = action_idx.item()
             self.action_distribution[action_idx] += 1
@@ -416,23 +353,23 @@ class TowerDefenseAgent:
             print(f"Done type: {type(done)}, value: {done}")
             return 0.0
     def get_action(self, state, valid_positions):
-        if self.breakthrough_mode:
-            self.update_breakthrough_mode()
+        """Advanced epsilon-greedy policy with cyclic exploration and curriculum learning"""
+        # Cyclic epsilon decay with plateau detection
+        if self.n_games % self.epsilon_cycle_length == 0 and self.n_games > 0:
+            # Check for plateau - if performance hasn't improved, reset exploration
+            if len(self.recent_scores) >= 10:
+                recent_avg = sum(self.recent_scores[-10:]) / 10
+                if recent_avg <= sum(self.recent_scores[-20:-10]) / 10:  # No improvement
+                    self.epsilon = min(60, self.epsilon * 1.5)  # Boost exploration
+                    print(f"🔄 Plateau detected! Boosting exploration to {self.epsilon:.1f}")
         
+        # Adaptive epsilon decay based on performance
         if hasattr(self, 'recent_performance') and len(self.recent_performance) > 10:
             avg_performance = sum(self.recent_performance[-10:]) / 10
-            performance_variance = np.var(self.recent_performance[-10:])
-            
-            if performance_variance < 0.3 and not self.breakthrough_mode:
-                print(f"⚠️  Low performance variance detected: {performance_variance:.3f}")
-                self.epsilon = min(self.epsilon * 1.05, 8.0)
-            elif avg_performance > 8 and performance_variance < 4 and not self.breakthrough_mode:
-                self.epsilon = max(self.epsilon_min, self.epsilon * 0.9995)
-            elif avg_performance < 3:
-                self.epsilon = min(self.epsilon * 1.002, 6.0)
-            else:
-                decay_rate = self.epsilon_decay * 1.1 if self.breakthrough_mode else self.epsilon_decay
-                self.epsilon = max(self.epsilon_min, self.epsilon * decay_rate)
+            if avg_performance < 5:  # Poor performance - increase exploration
+                self.epsilon = min(80, self.epsilon * 1.002)
+            elif avg_performance > 15:  # Good performance - decrease exploration faster
+                self.epsilon = max(self.epsilon_min, self.epsilon * 0.995)
         else:
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             
@@ -440,6 +377,9 @@ class TowerDefenseAgent:
         final_move = np.zeros(self.action_size)
         
         try:
+            # Noisy networks approach - add noise to encourage exploration
+            use_noise = self.n_games < 100 or random.random() < 0.1
+              # Improved exploration strategy with temperature scaling
             if random.randint(0, 100) < self.epsilon:
                 # Temperature-scaled exploration based on action diversity
                 temperature = getattr(self, 'action_temperature', 1.0)
@@ -493,6 +433,7 @@ class TowerDefenseAgent:
                     else:
                         move = valid_positions[0] if valid_positions else 0
             else:
+                # Exploitation with improved Q-value processing
                 self.model.eval()
                 with torch.no_grad():
                     if isinstance(state, torch.Tensor):
@@ -502,15 +443,21 @@ class TowerDefenseAgent:
                     
                     if len(state_tensor.shape) == 1:
                         state_tensor = state_tensor.unsqueeze(0)
-                    
+                      # Enhanced Q-value processing with temperature scaling
                     q_values = self.model(state_tensor)[0]
-                    self.track_q_value_stability(q_values)
                     
-                    if self.breakthrough_mode and random.random() < 0.1:
-                        noise_scale = 0.02
+                    # Apply temperature scaling for more diverse action selection
+                    temperature = getattr(self, 'action_temperature', 1.0)
+                    if temperature != 1.0:
+                        q_values = q_values / temperature
+                    
+                    if use_noise:
+                        # Adaptive noise based on performance and exploration needs
+                        noise_scale = 0.01 * (1.0 + getattr(self, 'plateau_episodes', 0) * 0.5)
                         noise = torch.randn_like(q_values) * noise_scale
                         q_values = q_values + noise
                     
+                    # Enhanced action masking
                     mask = torch.full_like(q_values, float('-inf'))
                     
                     if valid_positions:
@@ -524,7 +471,7 @@ class TowerDefenseAgent:
                             upgrade_idx = upgrade_start + i
                             if upgrade_idx < len(mask):
                                 mask[upgrade_idx] = 0
-                    
+                      # Select best action with optional softmax for diversity
                     masked_q_values = q_values + mask
                     
                     if torch.max(masked_q_values) == float('-inf'):
@@ -546,6 +493,8 @@ class TowerDefenseAgent:
             
             move = max(0, min(move, self.action_size - 1))
             final_move[move] = 1
+            
+            # Track action distribution for UCB-like selection
             self.action_distribution[move] += 1
             
         except Exception as e:
@@ -557,187 +506,153 @@ class TowerDefenseAgent:
                 final_move[0] = 1
         
         return final_move
-
-    def train_short_memory(self, state, action, reward, next_state, done):
-        try:
-            if abs(reward) < 0.01 and random.random() < 0.9:
-                return 0.0
-                
-            self.total_reward += reward
-                
-            if abs(reward) > 1000:
-                reward = np.sign(reward) * 1000
-                
-            if isinstance(action, np.ndarray) and action.size > 1:
-                action = np.argmax(action)
-            
-            # Ensure action is a proper integer
-            if isinstance(action, (np.ndarray, torch.Tensor)):
-                action = action.item()
-            action = int(action)
-                    
-            loss = self.trainer.train_step(state, action, reward, next_state, done)
-
-            if loss is not None:
-                self.running_loss += loss
-                
-            return loss        
-        except Exception as e:
-            print(f"Error in train_short_memory: {e}")
-            return 0.0
-
-    def train_long_memory(self):
-        if len(self.memory) < BATCH_SIZE:
-            return None
         
-        try:
-            batch_size = min(BATCH_SIZE, len(self.memory))
-            indices = np.random.choice(len(self.memory), size=batch_size, replace=False)
-            batch = [self.memory[idx] for idx in indices]
-            
-            states, actions, rewards, next_states, dones = zip(*batch)
-            
-            states = torch.tensor(np.array(states), dtype=torch.float32)
-            next_states = torch.tensor(np.array(next_states), dtype=torch.float32)
-            actions = torch.tensor(actions, dtype=torch.long)
-            rewards = torch.tensor(np.array(rewards), dtype=torch.float32)
-            
-            loss = self.trainer.train_step(states, actions, rewards, next_states, dones)
-            
-            return loss
-        except Exception as e:
-            print(f"Error in train_long_memory: {e}")
-            return None
-
+    def save_model(self, file_name='td_model.pth'):
+        """Save the trained model"""
+        model_folder_path = './models'
+        if not os.path.exists(model_folder_path):
+            os.makedirs(model_folder_path)
+        file_name = os.path.join(model_folder_path, file_name)
+        torch.save(self.model.state_dict(), file_name)
+        print(f"Model saved to {file_name}")
+        
+    def load_model(self, file_name='td_model.pth'):
+        """Load a trained model"""
+        model_folder_path = './models'
+        file_name = os.path.join(model_folder_path, file_name)
+        if os.path.exists(file_name):
+            self.model.load_state_dict(torch.load(file_name))
+            self.model.eval()
+            self.trainer.target_model.load_state_dict(self.model.state_dict())  # Also update target network
+            print(f"Model loaded from {file_name}")
     def log_episode_stats(self, game_reward, score):
+        """Enhanced episode statistics logging with plateau detection"""
         self.n_games += 1
+        self.reward_history.append(game_reward)
         self.recent_scores.append(score)
-        self.total_reward += game_reward
         
-        if hasattr(self, 'running_loss') and self.running_loss > 0:
-            avg_loss = self.running_loss / max(1, self.n_games - 1)
-        else:
-            avg_loss = 0.0
-            
-        if len(self.recent_scores) > 10:
-            avg_performance = sum(self.recent_scores[-10:]) / 10
-            if not hasattr(self, 'recent_performance'):
-                self.recent_performance = deque(maxlen=50)
-            self.recent_performance.append(avg_performance)
-        else:
-            avg_performance = sum(self.recent_scores) / len(self.recent_scores) if self.recent_scores else 0
-            
-        convergence_detected = self.detect_and_handle_convergence(score, avg_loss)
-        self.performance_memory.append(score)
-        
+        # Keep only recent scores for plateau detection
         if len(self.recent_scores) > 50:
             self.recent_scores.pop(0)
-
-    def detect_and_handle_convergence(self, score, loss):
-        if hasattr(self, 'action_distribution'):
-            total_actions = np.sum(self.action_distribution) 
-            if total_actions > 0:
-                action_probs = self.action_distribution / total_actions
-                action_entropy = -np.sum(action_probs * np.log(action_probs + 1e-8))
-            else:
-                action_entropy = 1.0
-        else:
-            action_entropy = 1.0
         
-        if hasattr(self, 'q_value_tracking') and self.q_value_tracking:
-            avg_q_value = np.mean(self.q_value_tracking)
-        else:
-            avg_q_value = 0.0
+        # Track recent performance for adaptive exploration
+        if not hasattr(self, 'recent_performance'):
+            self.recent_performance = []
+        self.recent_performance.append(score)
+        if len(self.recent_performance) > 20:
+            self.recent_performance.pop(0)        # Plateau detection with improved sensitivity
+        if len(self.recent_scores) >= 20:  # Faster detection with smaller window
+            recent_avg = sum(self.recent_scores[-10:]) / 10  # Very recent window
+            older_avg = sum(self.recent_scores[-20:-10]) / 10  # Older comparison window
             
-        self.convergence_detector.update(score, avg_q_value, action_entropy, loss or 0.0)
-        self.performance_buffer.append(score)
-        
-        if self.convergence_detector.detect_convergence():
-            self.initiate_breakthrough_mode()
-            return True
-                
-        return False
-
-    def initiate_breakthrough_mode(self):
-        if not self.breakthrough_mode:
-            self.breakthrough_mode = True
-            self.breakthrough_countdown = 200
-            self.last_breakthrough_game = self.n_games
-            self.breakthrough_attempts += 1
+            # Much more sensitive plateau detection for faster intervention
+            improvement_threshold = 0.1 if recent_avg < 5 else 0.2 if recent_avg < 10 else 0.3
             
-            self.epsilon = min(BREAKTHROUGH_EPSILON, self.epsilon * 3.0)
-            print(f"🚀 BREAKTHROUGH MODE activated! Game {self.n_games}")
-            print(f"   🎯 Exploration boosted to {self.epsilon:.1f}")
-
-    def update_breakthrough_mode(self):
-        if self.breakthrough_mode:
-            self.breakthrough_countdown -= 1
-            if self.breakthrough_countdown <= 0:
-                self.breakthrough_mode = False
-                self.epsilon = max(self.base_epsilon, self.epsilon * 0.3)
-                print(f"🏁 Breakthrough mode ended. Epsilon: {self.epsilon:.2f}")
-
-    def track_q_value_stability(self, q_values):
-        if len(q_values.shape) > 0:
-            avg_q = torch.mean(q_values).item()
-            self.q_value_tracking.append(avg_q)
-            
-            if len(self.q_value_tracking) >= 50:
-                recent_q_std = np.std(list(self.q_value_tracking)[-50:])
-                if recent_q_std < 0.1:
-                    print(f"⚠️  Q-value stability detected: std={recent_q_std:.3f}")
-
-    def save_model(self, filename='td_model.pth'):
-        """Save the current model to a file"""
-        try:
-            # Create models directory if it doesn't exist
-            models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-            if not os.path.exists(models_dir):
-                os.makedirs(models_dir)
-            
-            # Create full file path
-            filepath = os.path.join(models_dir, filename)
-            
-            # Save model state
-            torch.save({
-                'model_state_dict': self.model.state_dict(),
-                'optimizer_state_dict': self.trainer.optimizer.state_dict(),
-                'n_games': self.n_games,
-                'epsilon': self.epsilon,
-                'total_reward': self.total_reward,
-                'action_size': self.action_size,
-                'state_size': self.state_size
-            }, filepath)
-            
-            print(f"Model saved to {filepath}")
-            
-        except Exception as e:
-            print(f"Error saving model: {e}")
-
-    def load_model(self, filename='td_model.pth'):
-        """Load a previously saved model"""
-        try:
-            models_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
-            filepath = os.path.join(models_dir, filename)
-            
-            if os.path.exists(filepath):
-                checkpoint = torch.load(filepath)
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-                self.trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                self.n_games = checkpoint.get('n_games', 0)
-                self.epsilon = checkpoint.get('epsilon', self.epsilon)
-                self.total_reward = checkpoint.get('total_reward', 0)
-                
-                # Update target network
-                self.trainer.target_model.load_state_dict(self.model.state_dict())
-                
-                print(f"Model loaded from {filepath}")
-                print(f"Resuming from game {self.n_games} with epsilon {self.epsilon:.4f}")
-                return True
+            if recent_avg <= older_avg + improvement_threshold:
+                self.plateau_counter += 1
+                if self.plateau_counter >= 5:  # Much faster response (was 8)
+                    self.handle_plateau()
+                    self.plateau_counter = 0
             else:
-                print(f"Model file {filepath} not found")
-                return False
-                
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return False
+                self.plateau_counter = 0
+                self.last_improvement = self.n_games
+                # Reset plateau episodes when improvement is detected
+                if hasattr(self, 'plateau_episodes'):
+                    self.plateau_episodes = 0
+        
+        # Curriculum learning progression
+        if self.n_games % self.games_per_difficulty == 0:
+            recent_avg_score = sum(self.recent_scores[-self.games_per_difficulty:]) / self.games_per_difficulty
+            if recent_avg_score >= self.performance_threshold:
+                self.difficulty_level += 1
+                self.performance_threshold += 2  # Increase threshold for next level
+                print(f"🎯 Curriculum advanced to level {self.difficulty_level}! New threshold: {self.performance_threshold}")
+        
+        # Print enhanced stats every few games
+        if self.n_games % 5 == 0:
+            avg_reward = sum(self.reward_history[-20:]) / min(len(self.reward_history), 20)
+            avg_loss = self.ema_loss if self.ema_loss is not None else 0
+            avg_performance = sum(self.recent_performance[-10:]) / min(len(self.recent_performance), 10)
+            
+            print(f"Game {self.n_games}, Score: {score}, "
+                  f"Reward: {game_reward:.1f} (Avg: {avg_reward:.1f}), "
+                  f"Loss: {avg_loss:.6f}, Epsilon: {self.epsilon:.1f}, "
+                  f"Avg Performance: {avg_performance:.1f}, "
+                  f"Difficulty: {self.difficulty_level}, "
+                  f"Plateau: {self.plateau_counter}/10")
+            
+        # Save model periodically
+        if self.n_games % 20 == 0:
+            self.save_model(f"td_model_checkpoint_{self.n_games}.pth")
+              # Save best model based on score thresholds        if score > 15:
+            self.save_model(f'td_model_best_{score}.pth')
+            print(f"🏆 Best model saved with score: {score}")
+    
+    def handle_plateau(self):
+        """PLATEAU FIX: Much gentler plateau handling to preserve learned patterns"""
+        print(f"🔄 Plateau detected at game {self.n_games}! Applying gentle fixes...")
+        
+        # GENTLE plateau breaking - preserve learned knowledge
+        if not hasattr(self, 'plateau_episodes'):
+            self.plateau_episodes = 0
+        self.plateau_episodes += 1
+        
+        # Much more conservative approach
+        if self.plateau_episodes <= 3:
+            # Gentle exploration boost
+            self.epsilon = min(self.epsilon * 1.2, 8.0)  # REDUCED: Much gentler
+            lr_multiplier = 1.1  # REDUCED: Minimal LR change
+            print(f"   📈 Gentle Response: Slight exploration boost")
+        elif self.plateau_episodes <= 6:
+            # Moderate response
+            self.epsilon = min(self.epsilon * 1.3, 12.0)  # REDUCED: Still conservative
+            lr_multiplier = 1.15
+            
+            # Only clear small portion of memory
+            if len(self.memory) > 30000:
+                remove_count = len(self.memory) // 10  # REDUCED: Only 10% instead of 50%
+                for _ in range(remove_count):
+                    self.memory.popleft()
+                    if self.priorities:
+                        self.priorities.popleft()
+                print(f"   🧹 Cleared {remove_count} old experiences (10%)")
+            print(f"   📈 Moderate Response: Small memory refresh")
+        else:
+            # Final response - still conservative
+            self.epsilon = min(self.epsilon * 1.5, 15.0)  # REDUCED: Max 15 instead of 99
+            lr_multiplier = 1.2
+            
+            # Reset to slightly easier difficulty instead of level 1
+            self.difficulty_level = max(1, self.difficulty_level - 1)  # REDUCED: -1 instead of -2
+            self.performance_threshold = max(3, self.performance_threshold - 2)  # REDUCED
+            
+            # Minimal memory clearing
+            if len(self.memory) > 25000:
+                remove_count = len(self.memory) // 5  # REDUCED: Only 20% instead of 80%
+                for _ in range(remove_count):
+                    self.memory.popleft()
+                    if self.priorities:
+                        self.priorities.popleft()
+                print(f"   🧹 CONSERVATIVE: Cleared {remove_count} experiences (20%)")
+            
+            print(f"   💫 Conservative Response: Minimal reset")
+
+        # Gentle learning rate adjustment  
+        for param_group in self.trainer.optimizer.param_groups:
+            new_lr = min(0.0005, param_group['lr'] * lr_multiplier)  # REDUCED: Lower max LR
+            param_group['lr'] = new_lr
+
+        # Conservative parameter adjustment
+        self.alpha = min(0.8, self.alpha * 1.1)  # REDUCED: Gentler changes
+        
+        # Gentle temperature scaling
+        if not hasattr(self, 'action_temperature'):
+            self.action_temperature = 1.0
+        self.action_temperature = min(2.0, 1.0 + (0.2 * self.plateau_episodes))  # REDUCED
+
+        print(f"   📈 Plateau episode #{self.plateau_episodes}")
+        print(f"   🎯 New epsilon: {self.epsilon:.1f}")
+        print(f"   📚 New LR: {self.trainer.optimizer.param_groups[0]['lr']:.6f}")
+        print(f"   ⚖️  New alpha: {self.alpha:.3f}")
+        print(f"   🌡️  Action temperature: {getattr(self, 'action_temperature', 1.0):.2f}")
+

@@ -71,7 +71,6 @@ class TowerDefenseTrainer:
             eps=1e-8
         )
           # Learning rate scheduler
-          # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, 
             mode='min',
@@ -129,8 +128,8 @@ class TowerDefenseTrainer:
             print(f"Error in get_state: {e}")
             return torch.zeros(108, dtype=torch.float32) 
         
-    def train_step(self, state, action, reward, next_state, done, weights=None):
-        """Simplified training step with optional importance sampling weights"""
+    def train_step(self, state, action, reward, next_state, done):
+        """Simplified training step"""
         try:
             # Convert inputs to tensors
             if not isinstance(state, torch.Tensor):
@@ -180,13 +179,7 @@ class TowerDefenseTrainer:
                         target_q_values[i][action_idx] = reward[i] + self.gamma * torch.max(next_q_values[i])
             
             # Compute loss and update
-            # Compute loss and update
             loss = self.criterion(current_q_values, target_q_values)
-            
-            # Apply importance sampling weights if provided
-            if weights is not None:
-                element_wise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction='none')
-                loss = (element_wise_loss.mean(dim=1) * weights).mean()
             
             self.optimizer.zero_grad()
             loss.backward()

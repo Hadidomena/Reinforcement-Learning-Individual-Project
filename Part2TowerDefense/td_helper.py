@@ -20,78 +20,51 @@ def plot(scores, mean_scores, rewards):
     else:
         ax1.clear()
         ax2.clear()
-    if fig is None or ax1 is None or ax2 is None:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
-    else:
-        ax1.clear()
-        ax2.clear()
 
-        scores = list(scores) if scores else []
-        mean_scores = list(mean_scores) if mean_scores else []
-        rewards = list(rewards) if rewards else []
+    # Plot scores
+    ax1.set_title('Training Scores')
+    ax1.set_xlabel('Number of Games')
+    ax1.set_ylabel('Score')
+    ax1.plot(scores, 'b-', label='Score')
+    ax1.plot(mean_scores, 'r-', label='Mean Score')
+    
+    # Add moving average for scores
+    if len(scores) >= 5:
+        window_size = min(5, len(scores))
+        moving_avg = np.convolve(scores, np.ones(window_size)/window_size, mode='valid')
+        ax1.plot(range(window_size-1, len(scores)), moving_avg, 'g--', label=f'{window_size}-game Moving Avg')
+    
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper left')
 
-        ax1.set_title('Training Scores')
-        ax1.set_xlabel('Number of Games')
-        ax1.set_ylabel('Score')
-        
-        if scores:
-            ax1.plot(scores, 'b-', label='Score')
-        if mean_scores:
-            ax1.plot(mean_scores, 'r-', label='Mean Score')
-        
-        if len(scores) >= 5:
-            window_size = min(5, len(scores))
-            try:
-                moving_avg = np.convolve(scores, np.ones(window_size)/window_size, mode='valid')
-                start_idx = window_size - 1
-                end_idx = len(scores)
-                indices = list(range(start_idx, end_idx))
-                if len(moving_avg) == len(indices):
-                    ax1.plot(indices, moving_avg, 'g--', label=f'{window_size}-game Moving Avg')
-            except Exception as e:
-                print(f"Warning: Could not plot moving average for scores: {e}")
-        
-        ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper left')
-
-        ax2.set_title('Rewards per Game')
-        ax2.set_xlabel('Number of Games')
-        ax2.set_ylabel('Reward')
-        
-        if rewards:
-            min_reward = min(rewards)
-            max_reward = max(rewards)
-            if max_reward - min_reward < 1:
-                max_reward = min_reward + 1 if min_reward < 0 else 1
-            
-            y_range = max_reward - min_reward
-            buffer = max(y_range * 0.1, 1)
-            
-            ax2.set_ylim([min_reward - buffer, max_reward + buffer])
-            ax2.plot(rewards, 'g-', label='Reward')
-            
-            if len(rewards) >= 10:
-                window_size = min(10, len(rewards))
-                try:
-                    moving_avg = np.convolve(rewards, np.ones(window_size)/window_size, mode='valid')
-                    start_idx = window_size - 1
-                    end_idx = len(rewards)
-                    indices = list(range(start_idx, end_idx))
-                    if len(moving_avg) == len(indices):
-                        ax2.plot(indices, moving_avg, 'r--', label=f'{window_size}-game Moving Avg')
-                except Exception as e:
-                    print(f"Warning: Could not plot moving average for rewards: {e}")
+    # Plot rewards - ensure non-zero Y-axis range
+    ax2.set_title('Rewards per Game')
+    ax2.set_xlabel('Number of Games')
+    ax2.set_ylabel('Reward')
+    
+    # Calculate a reasonable y-axis range for rewards
+    min_reward = min(rewards) if rewards else 0
+    max_reward = max(rewards) if rewards else 1
+    if max_reward - min_reward < 1:  # Avoid flat line by setting a minimum range
+        max_reward = min_reward + 1 if min_reward < 0 else 1
+    
+    # Add a small buffer to the range
+    y_range = max_reward - min_reward
+    buffer = max(y_range * 0.1, 1)  # 10% buffer or minimum 1
+    
+    # Apply adjusted range with minimum span
+    ax2.set_ylim([min_reward - buffer, max_reward + buffer])
+    ax2.plot(rewards, 'g-', label='Reward')
+    
+    # Add moving average for rewards if we have enough data
+    if len(rewards) >= 10:
+        window_size = min(10, len(rewards))
+        moving_avg = np.convolve(rewards, np.ones(window_size)/window_size, mode='valid')
+        ax2.plot(range(window_size-1, len(rewards)), moving_avg, 'r--', label=f'{window_size}-game Moving Avg')
 
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc='upper left')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend(loc='upper left')
 
-    plt.tight_layout()
-    plt.draw()
-    plt.pause(0.1)
-    display.clear_output(wait=True)
-    display.display(plt.gcf())
     plt.tight_layout()
     plt.draw()
     plt.pause(0.1)
