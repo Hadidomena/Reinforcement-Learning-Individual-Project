@@ -70,8 +70,7 @@ class TowerDefenseTrainer:
             weight_decay=1e-5,  # Reduced weight decay
             eps=1e-8
         )
-        
-        # Learning rate scheduler
+          # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, 
             mode='min',
@@ -129,8 +128,8 @@ class TowerDefenseTrainer:
             print(f"Error in get_state: {e}")
             return torch.zeros(108, dtype=torch.float32) 
         
-    def train_step(self, state, action, reward, next_state, done, weights=None):
-        """Training step with support for importance sampling weights"""
+    def train_step(self, state, action, reward, next_state, done):
+        """Simplified training step"""
         try:
             # Convert inputs to tensors
             if not isinstance(state, torch.Tensor):
@@ -142,10 +141,6 @@ class TowerDefenseTrainer:
             if not isinstance(reward, torch.Tensor):
                 reward = torch.tensor(reward, dtype=torch.float32)
             
-            # Handle importance sampling weights
-            if weights is not None and not isinstance(weights, torch.Tensor):
-                weights = torch.tensor(weights, dtype=torch.float32)
-            
             # Ensure batch dimension
             if len(state.shape) == 1:
                 state = state.unsqueeze(0)
@@ -153,8 +148,6 @@ class TowerDefenseTrainer:
                 action = action.unsqueeze(0)
                 reward = reward.unsqueeze(0)
                 done = [done] if not isinstance(done, list) else done
-                if weights is not None:
-                    weights = weights.unsqueeze(0)
             
             # Set model to training mode
             self.model.train()
@@ -185,7 +178,7 @@ class TowerDefenseTrainer:
                     else:
                         target_q_values[i][action_idx] = reward[i] + self.gamma * torch.max(next_q_values[i])
             
-            # Compute loss with optional importance sampling weights
+            # Compute loss and update
             loss = self.criterion(current_q_values, target_q_values)
             
             if weights is not None:

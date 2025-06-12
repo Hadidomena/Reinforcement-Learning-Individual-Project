@@ -15,13 +15,11 @@ ax2 = None
 
 def plot(scores, mean_scores, rewards):
     global fig, ax1, ax2
-    
-    try:
-        if fig is None or ax1 is None or ax2 is None:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
-        else:
-            ax1.clear()
-            ax2.clear()
+    if fig is None or ax1 is None or ax2 is None:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    else:
+        ax1.clear()
+        ax2.clear()
 
         scores = list(scores) if scores else []
         mean_scores = list(mean_scores) if mean_scores else []
@@ -79,18 +77,14 @@ def plot(scores, mean_scores, rewards):
                 except Exception as e:
                     print(f"Warning: Could not plot moving average for rewards: {e}")
 
-        ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='upper left')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(loc='upper left')
 
-        plt.tight_layout()
-        plt.draw()
-        plt.pause(0.1)
-        display.clear_output(wait=True)
-        display.display(plt.gcf())
-        
-    except Exception as e:
-        print(f"Error in plotting function: {e}")
-        print("Continuing training without plots...")
+    plt.tight_layout()
+    plt.draw()
+    plt.pause(0.1)
+    display.clear_output(wait=True)
+    display.display(plt.gcf())
 
 class TrainingAnalyzer:
     def __init__(self, agent, log_dir='training_logs'):
