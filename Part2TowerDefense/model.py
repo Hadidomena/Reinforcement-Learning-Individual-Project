@@ -128,8 +128,8 @@ class TowerDefenseTrainer:
             print(f"Error in get_state: {e}")
             return torch.zeros(108, dtype=torch.float32) 
         
-    def train_step(self, state, action, reward, next_state, done):
-        """Simplified training step"""
+    def train_step(self, state, action, reward, next_state, done, weights=None):
+        """Simplified training step with optional importance sampling weights"""
         try:
             # Convert inputs to tensors
             if not isinstance(state, torch.Tensor):
@@ -181,6 +181,7 @@ class TowerDefenseTrainer:
             # Compute loss and update
             loss = self.criterion(current_q_values, target_q_values)
             
+            # Apply importance sampling weights if provided
             if weights is not None:
                 element_wise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction='none')
                 loss = (element_wise_loss.mean(dim=1) * weights).mean()
