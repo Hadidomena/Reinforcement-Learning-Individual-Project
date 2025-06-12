@@ -27,6 +27,7 @@ class TowerDefenseAgent:
         self.base_epsilon = 0.5  # REDUCED: Lower base for resets
         self.gamma = 0.99  # Standard discount factor
         
+        # Performance-based epsilon management
         self.best_recent_score = 0
         self.performance_window = 100
         self.stable_performance_threshold = 0.85
