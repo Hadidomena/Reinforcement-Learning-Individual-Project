@@ -199,13 +199,17 @@ class TowerDefenseAgent:
             action_idx = int(action_idx)
             
             if game_stats:
-                action_type = "upgrade" if action_idx >= c.ROWS * c.COLS else "place"
+                action_type = "upgrade" if np.argmax(action) >= c.ROWS * c.COLS else "place"
                 shaped_reward = self.reward_shaper.calculate_reward(state, action_type, game_stats)
                 curiosity_reward = self.reward_shaper.get_curiosity_reward(state, action, next_state)
                 curriculum_bonus = self.reward_shaper.get_curriculum_bonus(
                     self.difficulty_level, game_stats.get('score', 0)
                 )
                 total_reward = reward + shaped_reward + curiosity_reward + curriculum_bonus
+                
+                # Log significant reward changes
+                if abs(shaped_reward) > 5:
+                    print(f"Shaped reward: {shaped_reward:.1f} (base: {reward:.1f}, curiosity: {curiosity_reward:.1f})")
             else:
                 total_reward = reward
                 
@@ -240,10 +244,177 @@ class TowerDefenseAgent:
                 action_idx = action_idx.item()
             self.action_distribution[action_idx] += 1
             self.action_history.append(action_idx)
+            
+            # Log extreme rewards for debugging
+            if abs(total_reward) > 20:
+                print(f"High total reward detected: {total_reward:.1f}")
                     
         except Exception as e:
             print(f"Error in remember: {e}")
-
+            import traceback
+            traceback.print_exc()
+    def train_long_memory(self):
+        """Enhanced training with elite experience replay and anti-catastrophic forgetting"""
+        if len(self.memory) < BATCH_SIZE:
+            return None
+        
+        try:
+            # Regular experience replay
+            loss = self._train_batch(self.memory, self.priorities, "regular")
+              # Elite experience replay to prevent catastrophic forgetting
+            if len(self.elite_memory) >= BATCH_SIZE // 2:
+                elite_experiences = list(self.elite_memory)
+                elite_priorities = [exp[5] for exp in elite_experiences]  # Extract priorities
+                elite_batch = [(exp[0], exp[1], exp[2], exp[3], exp[4]) for exp in elite_experiences]  # Remove priority
+                
+                elite_loss = self._train_batch(elite_batch, elite_priorities, "elite")
+                if elite_loss is not None:
+                    loss = (loss + elite_loss * 0.5) / 1.5 if loss is not None else elite_loss
+                    
+            return loss
+        except Exception as e:
+            print(f"Error in train_long_memory: {e}")
+            return None
+    
+    def _train_batch(self, memory_buffer, priority_buffer, batch_type="regular"):
+        """Train on a batch of experiences with prioritized sampling"""
+        if len(memory_buffer) < BATCH_SIZE:
+            return None
+            
+        try:
+            # Increase beta over time to reduce sampling bias
+            self.beta = min(1.0, self.beta + self.beta_increment)
+            
+            # Sample based on batch type
+            if batch_type == "elite":
+                # For elite experiences, use uniform sampling to preserve all high-level strategies
+                batch_size = min(BATCH_SIZE // 2, len(memory_buffer))
+                indices = np.random.choice(len(memory_buffer), size=batch_size, replace=False)
+                batch = [memory_buffer[idx] for idx in indices]
+                weights = torch.ones(len(batch))  # Equal weights for elite experiences
+            else:
+                # Regular prioritized sampling
+                if PRIORITIZED_REPLAY and priority_buffer:
+                    probs = np.array(priority_buffer)
+                    # Reduce temperature for more stability
+                    temperature = max(0.8, 1.2 - (self.n_games / 300))
+                    probs = np.power(probs, 1.0 / temperature)
+                    probs = probs / np.sum(probs)
+                    
+                    indices = np.random.choice(
+                        len(memory_buffer), 
+                        size=min(BATCH_SIZE, len(memory_buffer)),
+                        replace=False, 
+                        p=probs
+                    )
+                    
+                    # Calculate importance sampling weights
+                    weights = (len(memory_buffer) * probs[indices]) ** (-self.beta)
+                    weights = weights / np.max(weights)
+                    weights = torch.tensor(weights, dtype=torch.float32)
+                    
+                    batch = [memory_buffer[idx] for idx in indices]
+                else:
+                    # Standard uniform sampling
+                    indices = np.random.choice(
+                        len(memory_buffer), 
+                        size=min(BATCH_SIZE, len(memory_buffer)),
+                        replace=False
+                    )
+                    batch = [memory_buffer[idx] for idx in indices]
+                    weights = torch.ones(len(batch))
+                    
+            # Unpack batch
+            states, actions, rewards, next_states, dones = zip(*batch)
+            
+            # Convert to tensors with careful error handling
+            try:
+                states = torch.tensor(np.array(states), dtype=torch.float32)
+                next_states = torch.tensor(np.array(next_states), dtype=torch.float32)
+                actions = torch.tensor(np.array(actions), dtype=torch.float32) \
+                    if isinstance(actions[0], np.ndarray) and actions[0].size > 1 \
+                    else torch.tensor(np.array(actions), dtype=torch.long)
+                rewards = torch.tensor(np.array(rewards), dtype=torch.float32)
+                
+                # Check for NaN values
+                if torch.isnan(states).any() or torch.isnan(next_states).any():
+                    print("Warning: NaN values in batch. Cleaning up...")
+                    states = torch.nan_to_num(states)
+                    next_states = torch.nan_to_num(next_states)
+            except Exception as e:
+                print(f"Error converting batch to tensors: {e}")
+                return None
+            
+            # Train the model with importance sampling weights
+            loss = self.trainer.train_step(states, actions, rewards, next_states, dones, weights)
+            
+            # Update EMA loss and adaptive learning rate
+            if loss is not None:
+                if self.ema_loss is None:
+                    self.ema_loss = loss
+                else:
+                    self.ema_loss = 0.98 * self.ema_loss + 0.02 * loss  # More stable EMA
+                
+                # Conservative adaptive learning rate
+                if hasattr(self.trainer, 'adaptive_lr_step'):
+                    self.trainer.adaptive_lr_step(loss)
+                    
+                # Log progress for elite batches
+                if batch_type == "elite" and self.debug_counter % 100 == 0:
+                    print(f"Elite batch training - Loss: {loss:.6f}, Batch size: {len(batch)}")
+                    
+            return loss
+        except Exception as e:
+            print(f"Error in _train_batch ({batch_type}): {e}")
+            return None
+    
+    def train_short_memory(self, state, action, reward, next_state, done):
+        """Train on a single experience with improved error handling"""
+        try:
+            # Only train on significant experiences to reduce noise
+            if abs(reward) < 0.01 and random.random() < 0.9:
+                return 0.0  # Skip training on very small rewards most of the time
+                
+            # Track total reward for this episode
+            self.total_reward += reward
+                
+            # Clip extreme rewards
+            if abs(reward) > 1000:
+                print(f"Clipping extreme reward: {reward}")
+                reward = np.sign(reward) * 1000
+                
+            # Handle large action arrays - convert to index if needed
+            if isinstance(action, np.ndarray) and action.size > 1:
+                if np.sum(action) == 1:  # If it's one-hot encoded
+                    action = np.argmax(action)
+                else:
+                    # If it's not one-hot encoded but still large, use argmax
+                    action = np.argmax(action)
+                    
+            # Do the actual training
+            loss = self.trainer.train_step(state, action, reward, next_state, done)
+            
+            # Add to running loss for tracking
+            if loss is not None:
+                self.running_loss += loss
+            
+            # Log occasional stats during training
+            if hasattr(self, 'debug_counter') and self.debug_counter % 500 == 0:
+                action_idx = torch.argmax(action).item() if isinstance(action, torch.Tensor) and action.dim() > 0 else action
+                if not isinstance(action_idx, (int, np.integer)):
+                    action_idx = action_idx.item() if hasattr(action_idx, 'item') else 0
+                print(f"Training step - Reward: {reward:.2f}, Action: {action_idx}, Loss: {loss:.6f}")
+                
+            return loss        
+        except Exception as e:
+            # Provide more detailed error information
+            print(f"Error in train_short_memory: {e}")
+            print(f"State type: {type(state)}, shape: {state.shape if hasattr(state, 'shape') else 'N/A'}")
+            print(f"Action type: {type(action)}, shape: {action.shape if hasattr(action, 'shape') else 'N/A'}")
+            print(f"Reward type: {type(reward)}, value: {reward}")
+            print(f"Next state type: {type(next_state)}, shape: {next_state.shape if hasattr(next_state, 'shape') else 'N/A'}")
+            print(f"Done type: {type(done)}, value: {done}")
+            return 0.0
     def get_action(self, state, valid_positions):
         if self.breakthrough_mode:
             self.update_breakthrough_mode()
@@ -270,10 +441,57 @@ class TowerDefenseAgent:
         
         try:
             if random.randint(0, 100) < self.epsilon:
-                if valid_positions:
-                    move = random.choice(valid_positions)
+                # Temperature-scaled exploration based on action diversity
+                temperature = getattr(self, 'action_temperature', 1.0)
+                
+                # Adaptive exploration based on game phase, curriculum, and performance
+                difficulty_factor = min(1.0, self.difficulty_level / 5.0)
+                
+                # Dynamic action type selection based on performance
+                if self.n_games < 30:
+                    # Early game: focus on placement with some randomness
+                    action_type = "place" if random.random() < (0.95 - difficulty_factor * 0.1) else "upgrade"
+                elif self.n_games < 100:
+                    # Mid game: balanced approach with performance consideration
+                    recent_performance = sum(self.recent_performance[-5:]) / min(len(self.recent_performance), 5) if hasattr(self, 'recent_performance') and self.recent_performance else 5
+                    if recent_performance > 12:  # Good performance - more strategic
+                        action_type = "place" if random.random() < (0.70 - difficulty_factor * 0.1) else "upgrade"
+                    else:  # Poor performance - more placement focus
+                        action_type = "place" if random.random() < (0.85 - difficulty_factor * 0.1) else "upgrade"
                 else:
-                    move = 0
+                    # Late game: performance-adaptive strategy
+                    recent_performance = sum(self.recent_performance[-5:]) / min(len(self.recent_performance), 5) if hasattr(self, 'recent_performance') and self.recent_performance else 5
+                    if recent_performance > 15:  # High performance - strategic upgrades
+                        action_type = "place" if random.random() < (0.50 - difficulty_factor * 0.15) else "upgrade"
+                    elif recent_performance > 10:  # Medium performance - balanced
+                        action_type = "place" if random.random() < (0.70 - difficulty_factor * 0.1) else "upgrade"
+                    else:  # Low performance - back to basics
+                        action_type = "place" if random.random() < (0.80 - difficulty_factor * 0.05) else "upgrade"
+                
+                if action_type == "place" and valid_positions:
+                    # Smart placement selection - prefer positions near existing turrets or key locations
+                    if len(self.turret_group) > 0 and random.random() < 0.3:
+                        # Sometimes place near existing turrets for synergy
+                        move = random.choice(valid_positions)
+                    else:
+                        move = random.choice(valid_positions)
+                else:
+                    # Smart upgrade selection with action frequency balancing
+                    if hasattr(self, 'turret_group') and len(self.turret_group) > 0:
+                        upgrade_start = c.ROWS * c.COLS
+                        upgrade_range = min(len(self.turret_group), 20)
+                        
+                        # UCB-like selection for upgrades to balance exploration
+                        action_counts = self.action_distribution[upgrade_start:upgrade_start + upgrade_range]
+                        if action_counts.sum() > 0:
+                            # Select less-tried upgrades more often
+                            weights = 1.0 / (action_counts + 1)
+                            weights = weights / weights.sum()
+                            move = upgrade_start + np.random.choice(upgrade_range, p=weights)
+                        else:
+                            move = random.randint(upgrade_start, upgrade_start + upgrade_range - 1)
+                    else:
+                        move = valid_positions[0] if valid_positions else 0
             else:
                 self.model.eval()
                 with torch.no_grad():
@@ -312,7 +530,19 @@ class TowerDefenseAgent:
                     if torch.max(masked_q_values) == float('-inf'):
                         move = valid_positions[0] if valid_positions else 0
                     else:
-                        move = torch.argmax(masked_q_values).item()
+                        if use_noise and random.random() < (0.15 + getattr(self, 'plateau_episodes', 0) * 0.05):
+                            # Dynamic softmax selection probability based on plateau state
+                            temperature = getattr(self, 'action_temperature', 1.0)
+                            probs = F.softmax(masked_q_values / (0.1 * temperature), dim=0)
+                            valid_probs = probs[masked_q_values != float('-inf')]
+                            if len(valid_probs) > 0:
+                                valid_indices = torch.where(masked_q_values != float('-inf'))[0]
+                                selected_idx = torch.multinomial(valid_probs, 1)[0]
+                                move = valid_indices[selected_idx].item()
+                            else:
+                                move = torch.argmax(masked_q_values).item()
+                        else:
+                            move = torch.argmax(masked_q_values).item()
             
             move = max(0, min(move, self.action_size - 1))
             final_move[move] = 1

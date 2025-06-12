@@ -71,6 +71,7 @@ class TowerDefenseTrainer:
             eps=1e-8
         )
           # Learning rate scheduler
+          # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, 
             mode='min',
@@ -178,6 +179,7 @@ class TowerDefenseTrainer:
                     else:
                         target_q_values[i][action_idx] = reward[i] + self.gamma * torch.max(next_q_values[i])
             
+            # Compute loss and update
             # Compute loss and update
             loss = self.criterion(current_q_values, target_q_values)
             
