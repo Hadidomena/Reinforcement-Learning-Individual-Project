@@ -166,7 +166,7 @@ class TowerDefenseAI:
                 self.world.money -= c.BUY_COST
                 
                 base_reward = 2.0 
-                position_bonus = position_quality * 1.5
+                position_bonus = position_quality * 1.0
                 timing_bonus = self._calculate_timing_bonus() * 0.5
                 placement_reward = base_reward + position_bonus + timing_bonus
                 reward += placement_reward
@@ -183,7 +183,7 @@ class TowerDefenseAI:
                     turret.upgrade_level < c.TURRET_LEVELS):
                     turret.upgrade()
                     self.world.money -= c.UPGRADE_COST
-                    upgrade_reward = 1.5 + (turret.upgrade_level * 1.0) 
+                    upgrade_reward = 1.5 + (turret.upgrade_level * 0.9) 
                     reward += upgrade_reward
                     action_successful = True
                 else:
